@@ -64,8 +64,6 @@ librespotc_login_password(const char *username, const char *password);
 struct sp_session *
 librespotc_login_stored_cred(const char *username, uint8_t *stored_cred, size_t stored_cred_len);
 
-// FIXME Ideally a web API token could be used here, but either Spotify doesn't
-// accept it, or the decoding of the token done here is incorrect
 struct sp_session *
 librespotc_login_token(const char *username, const char *token);
 

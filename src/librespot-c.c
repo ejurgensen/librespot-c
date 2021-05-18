@@ -57,8 +57,6 @@ events for proceeding are activated directly.
 /* TODO list
 
  - protect against DOS
- - web api token (scope streaming)
- - credit Shannon authors
 */
 
 
@@ -149,11 +147,7 @@ session_new(struct sp_session **out, struct sp_cmdargs *cmdargs, event_callback_
     }
   else if (cmdargs->token)
     {
-      ret = crypto_base64_to_bin(session->credentials.token, sizeof(session->credentials.token), cmdargs->token);
-      if (ret < 0)
-	RETURN_ERROR(SP_ERR_INVALID, "Invalid token");
-
-      session->credentials.token_len = ret;
+      snprintf(session->credentials.token, sizeof(session->credentials.token), "%s", cmdargs->token);
     }
   else
     {

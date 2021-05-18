@@ -68,6 +68,3 @@ crypto_aes_decrypt(uint8_t *encrypted, size_t encrypted_len, struct crypto_aes_c
 
 int
 crypto_base62_to_bin(uint8_t *out, size_t out_len, const char *in);
-
-int
-crypto_base64_to_bin(uint8_t *out, size_t out_len, const char *in);
