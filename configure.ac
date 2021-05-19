@@ -18,5 +18,5 @@ PKG_CHECK_MODULES([LIBGCRYPT], [libgcrypt])
 PKG_CHECK_MODULES([LIBCURL], [libcurl])
 PKG_CHECK_MODULES([LIBPROTOBUF_C], [libprotobuf-c])
 
-AC_CONFIG_FILES([Makefile src/Makefile tests/Makefile])
+AC_CONFIG_FILES([Makefile tests/Makefile])
 AC_OUTPUT

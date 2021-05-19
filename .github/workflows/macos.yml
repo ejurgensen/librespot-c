@@ -1,0 +1,30 @@
+name: MacOS
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: build tools
+      run: brew install automake autoconf pkg-config
+    - name: dependencies (core)
+      run: brew install libevent libgcrypt json-c protobuf-c
+    - name: dependencies (check)
+      run: brew install curl
+    - name: configure
+      run: |
+        autoreconf -vi
+        ./configure
+    - name: build
+      run: make
+    - name: make check
+      run: make check
+    - name: install
+      run: sudo make install
