@@ -1,4 +1,4 @@
-lib_LIBRARIES = librespot-c.a
+noinst_LIBRARIES = librespot-c.a
 
 AM_CPPFLAGS = -I$(top_builddir)
 

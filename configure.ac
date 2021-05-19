@@ -5,7 +5,12 @@ AC_PROG_CC
 AM_PROG_AR
 AC_PROG_RANLIB
 
-AC_SEARCH_LIBS([pthread_exit], [pthread], [],	[AC_MSG_ERROR([[pthreads library is required]])])
+AC_CHECK_HEADERS_ONCE([endian.h sys/endian.h])
+AC_CHECK_DECL([htobe16], [],
+	[AC_CHECK_HEADERS([libkern/OSByteOrder.h], [], [AC_MSG_ERROR([[Missing functions to swap byte order]])])],
+)
+
+AC_SEARCH_LIBS([pthread_exit], [pthread], [], [AC_MSG_ERROR([[pthreads library is required]])])
 
 PKG_CHECK_MODULES([LIBEVENT], [libevent])
 PKG_CHECK_MODULES([JSON_C], [json-c])
