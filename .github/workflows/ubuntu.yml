@@ -16,7 +16,7 @@ jobs:
     - name: install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -yq build-essential clang clang-tools git autotools-dev autoconf libevent-dev libgcrypt20-dev libcurl4-gnutls-dev libjson-c-dev libprotobuf-c-dev libgnutls28-dev
+        sudo apt-get install -yq build-essential autotools-dev autoconf libevent-dev libgcrypt20-dev libcurl4-gnutls-dev libjson-c-dev libprotobuf-c-dev
     - name: autoconf
       run: autoreconf -vi
     - name: configure
