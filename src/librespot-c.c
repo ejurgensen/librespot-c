@@ -259,14 +259,14 @@ continue_cb(int fd, short what, void *arg)
   // handshake (type_next) and then a chunk request (type_queued)
   if (session->msg_type_next != MSG_TYPE_NONE)
     {
-      sp_cb.logmsg(">>> msg_next >>>\n");
+//      sp_cb.logmsg(">>> msg_next >>>\n");
 
       type = session->msg_type_next;
       session->msg_type_next = MSG_TYPE_NONE;
     }
   else if (session->msg_type_queued != MSG_TYPE_NONE)
     {
-      sp_cb.logmsg(">>> msg_queued >>>\n");
+//      sp_cb.logmsg(">>> msg_queued >>>\n");
 
       type = session->msg_type_queued;
       session->msg_type_queued = MSG_TYPE_NONE;

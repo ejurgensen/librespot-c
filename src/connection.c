@@ -330,10 +330,7 @@ packet_make_encrypted(uint8_t *out, size_t out_len, uint8_t cmd, const uint8_t *
 
   plain_len = sizeof(cmd) + sizeof(be) + payload_len;
   if (plain_len > out_len)
-    {
-      sp_cb.logmsg("Buffer too small\n");
-      goto error;
-    }
+    goto error;
 
   ptr = out;
   memcpy(ptr, &cmd, sizeof(cmd));
@@ -346,10 +343,7 @@ packet_make_encrypted(uint8_t *out, size_t out_len, uint8_t cmd, const uint8_t *
 
   pkt_len = crypto_encrypt(out, out_len, plain_len, cipher);
   if (pkt_len < 9)
-    {
-      sp_cb.logmsg("Could not encrypt\n");
-      goto error;
-    }
+    goto error;
 
   return pkt_len;
 
@@ -1305,7 +1299,7 @@ msg_send(struct sp_message *msg, struct sp_connection *conn)
   if (ret != pkt_len)
     RETURN_ERROR(SP_ERR_NOCONNECTION, "Error sending packet to Spotify");
 
-  sp_cb.logmsg("Sent pkt type %d (cmd=0x%02x) with size %zu (fd=%d)\n", msg->type, msg->cmd, pkt_len, conn->response_fd);
+//  sp_cb.logmsg("Sent pkt type %d (cmd=0x%02x) with size %zu (fd=%d)\n", msg->type, msg->cmd, pkt_len, conn->response_fd);
 #else
   ret = debug_mock_response(msg, conn);
   if (ret < 0)
