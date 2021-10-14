@@ -900,7 +900,10 @@ msg_make_client_hello(uint8_t *out, size_t out_len, struct sp_session *session)
   uint8_t nonce[16] = { 0 };
   size_t len;
 
-  build_info.product = PRODUCT__PRODUCT_PARTNER;
+  // librespot uses PRODUCT_PARTNER, librespot-java uses PRODUCT_CLIENT and
+  // before that PRODUCT_LIBSPOTIFY. Use PRODUCT_CLIENT here since it means
+  // free accounts work (with low audio quality).
+  build_info.product = PRODUCT__PRODUCT_CLIENT;
   build_info.platform = PLATFORM__PLATFORM_LINUX_X86;
   build_info.version = 109800078;
 
