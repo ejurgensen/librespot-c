@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <time.h>
 
 #include <event2/event.h>
 #include <event2/buffer.h>
@@ -42,6 +43,10 @@
 
 // Max wait for AP to respond
 #define SP_AP_TIMEOUT_SECS 10
+
+// After a disconnect we try to reconnect, but if we are disconnected yet again
+// we get the hint and won't try reconnecting again until after this cooldown
+#define SP_AP_COOLDOWN_SECS 30
 
 // If client hasn't requested anything in particular
 #define SP_BITRATE_DEFAULT SP_BITRATE_320
@@ -306,6 +311,7 @@ struct sp_channel
 struct sp_session
 {
   struct sp_connection conn;
+  time_t cooldown_ts;
 
   bool is_logged_in;
   struct sp_credentials credentials;

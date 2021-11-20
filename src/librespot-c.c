@@ -382,9 +382,15 @@ static int
 relogin(enum sp_msg_type type, struct sp_session *session)
 {
   int ret;
+  time_t now;
 
-  if (session->msg_type_queued != MSG_TYPE_NONE)
-    RETURN_ERROR(SP_ERR_NOCONNECTION, "Cannot send message, another request is waiting for handshake");
+  // relogin() will be called after a disconnect, but if we are quickly
+  // disconnected again then we will take a break
+  now = time(NULL);
+  if (now < session->cooldown_ts)
+    RETURN_ERROR(SP_ERR_NOCONNECTION, "Cannot connect to access point, cooldown after disconnect is in effect");
+  else
+    session->cooldown_ts = now + SP_AP_COOLDOWN_SECS;
 
   ret = request_make(MSG_TYPE_CLIENT_HELLO, session);
   if (ret < 0)
