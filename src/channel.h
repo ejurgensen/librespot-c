@@ -10,6 +10,9 @@ channel_free_all(struct sp_session *session);
 int
 channel_new(struct sp_channel **channel, struct sp_session *session, const char *path, struct event_base *evbase, event_callback_fn write_cb);
 
+void
+channel_retry(struct sp_channel *channel);
+
 int
 channel_data_write(struct sp_channel *channel);
 

@@ -111,6 +111,15 @@ enum sp_media_type
   SP_MEDIA_EPISODE,
 };
 
+enum sp_channel_state
+{
+  SP_CHANNEL_STATE_UNALLOCATED = 0,
+  SP_CHANNEL_STATE_OPENED,
+  SP_CHANNEL_STATE_PLAYING,
+  SP_CHANNEL_STATE_PAUSED,
+  SP_CHANNEL_STATE_STOPPED,
+};
+
 // From librespot-golang
 enum sp_cmd_type
 {
@@ -280,8 +289,8 @@ struct sp_channel
 {
   int id;
 
-  bool is_allocated;
-  bool is_writing;
+  enum sp_channel_state state;
+
   bool is_data_mode;
   bool is_spotify_header_received;
   size_t seek_pos;
@@ -328,9 +337,10 @@ struct sp_session
   // Go to next step in a request sequence
   struct event *continue_ev;
 
-  // Current (or last) message being processed
-  enum sp_msg_type msg_type_queued;
+  // Current, next and subsequent message being processed
+  enum sp_msg_type msg_type_last;
   enum sp_msg_type msg_type_next;
+  enum sp_msg_type msg_type_queued;
   int (*response_handler)(uint8_t *, size_t, struct sp_session *);
 
   struct sp_session *next;
