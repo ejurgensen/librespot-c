@@ -54,6 +54,7 @@ events for proceeding are activated directly.
 #include "connection.h"
 #include "channel.h"
 
+// #define DEBUG_DISCONNECT 1
 
 /* -------------------------------- Globals --------------------------------- */
 
@@ -72,6 +73,9 @@ static struct commands_base *sp_cmdbase;
 
 static struct timeval sp_response_timeout_tv = { SP_AP_TIMEOUT_SECS, 0 };
 
+#ifdef DEBUG_DISCONNECT
+static int debug_disconnect_counter;
+#endif
 
 // Forwards
 static int
@@ -352,6 +356,15 @@ response_cb(int fd, short what, void *arg)
   if (what == EV_READ)
     {
       ret = evbuffer_read(conn->incoming, fd, -1);
+#ifdef DEBUG_DISCONNECT
+      debug_disconnect_counter++;
+      if (debug_disconnect_counter == 1000)
+	{
+	  sp_cb.logmsg("Simulating a disconnection from the access point (last request type was %d)\n", session->msg_type_last);
+	  ret = 0;
+	}
+#endif
+
       if (ret == 0)
 	RETURN_ERROR(SP_ERR_NOCONNECTION, "The access point disconnected");
       else if (ret < 0)
