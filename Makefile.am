@@ -14,8 +14,12 @@ PROTO_SRC = \
 CORE_SRC = \
 	src/librespot-c.c src/connection.c src/channel.c src/crypto.c src/commands.c
 
+CONNECT_SRC = \
+	src/connect.c
+
 librespot_c_a_SOURCES =  \
 	$(CORE_SRC)      \
+	$(CONNECT_SRC)   \
 	$(SHANNON_SRC)   \
 	$(PROTO_SRC)
 

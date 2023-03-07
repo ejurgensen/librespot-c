@@ -43,6 +43,7 @@ struct sp_sysinfo
   char client_version[16];
   char client_build_id[16];
   char device_id[41]; // librespot gives a 20 byte id (so 40 char hex + 1 zero term)
+  char speaker_name[32]; // Spotify Connect speaker name
 };
 
 struct sp_callbacks
@@ -112,5 +113,11 @@ librespotc_init(struct sp_sysinfo *sysinfo, struct sp_callbacks *callbacks);
 
 void
 librespotc_deinit(void);
+
+
+/* ----------------------------- Spotify Connect ---------------------------- */
+
+int
+librespotc_connect_getinfo(uint8_t **response, size_t *len, struct sp_sysinfo *info, struct sp_credentials *credentials);
 
 #endif /* !__LIBRESPOT_C_H__ */
