@@ -34,6 +34,7 @@
 #include "proto/authentication.pb-c.h"
 #include "proto/mercury.pb-c.h"
 #include "proto/metadata.pb-c.h"
+#include "proto/spirc.pb-c.h"
 
 #define SP_AP_RESOLVE_URL "https://APResolve.spotify.com/"
 #define SP_AP_RESOLVE_KEY "ap_list"
@@ -58,6 +59,7 @@
 // librespot uses /3, but -golang and -java use /4
 #define SP_MERCURY_URI_TRACK "hm://metadata/4/track/"
 #define SP_MERCURY_URI_EPISODE "hm://metadata/4/episode/"
+#define SP_MERCURY_URI_REMOTE_USER "hm://remote/user/"
 
 // Special Spotify header that comes before the actual Ogg data
 #define SP_OGG_HEADER_LEN 167
@@ -107,6 +109,7 @@ enum sp_msg_type
   MSG_TYPE_PONG,
   MSG_TYPE_MERCURY_TRACK_GET,
   MSG_TYPE_MERCURY_EPISODE_GET,
+  MSG_TYPE_SPIRC_HELLO,
   MSG_TYPE_AUDIO_KEY_GET,
   MSG_TYPE_CHUNK_REQUEST,
 };
@@ -127,7 +130,7 @@ enum sp_channel_state
   SP_CHANNEL_STATE_STOPPED,
 };
 
-// From librespot-golang
+// From librespot-golang, for more see librespot's core/src/packet.rs
 enum sp_cmd_type
 {
   CmdNone           = 0x00,
@@ -160,6 +163,7 @@ enum sp_cmd_type
   CmdMercuryReq     = 0xb2,
   CmdMercurySub     = 0xb3,
   CmdMercuryUnsub   = 0xb4,
+  CmdMercuryEvent   = 0xb5,
 };
 
 struct sp_cmdargs

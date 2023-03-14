@@ -9,7 +9,8 @@ PROTO_SRC = \
 	src/proto/keyexchange.pb-c.c src/proto/keyexchange.pb-c.h \
 	src/proto/authentication.pb-c.c src/proto/authentication.pb-c.h \
 	src/proto/mercury.pb-c.c src/proto/mercury.pb-c.h \
-	src/proto/metadata.pb-c.c src/proto/metadata.pb-c.h
+	src/proto/metadata.pb-c.c src/proto/metadata.pb-c.h \
+	src/proto/spirc.pb-c.c src/proto/spirc.pb-c.h
 
 CORE_SRC = \
 	src/librespot-c.c src/connection.c src/channel.c src/crypto.c src/commands.c

@@ -120,4 +120,10 @@ librespotc_deinit(void);
 int
 librespotc_connect_getinfo(uint8_t **response, size_t *len, struct sp_sysinfo *info, struct sp_credentials *credentials);
 
+int
+librespotc_connect_adduser(uint8_t **response, size_t *len, char *body, struct sp_session *session);
+
+int
+librespotc_connect_hello(struct sp_session *session);
+
 #endif /* !__LIBRESPOT_C_H__ */

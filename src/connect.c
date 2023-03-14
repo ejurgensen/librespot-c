@@ -25,11 +25,26 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
 #include <event2/buffer.h>
+#include <event2/http.h>
+#include <event2/keyvalq_struct.h>
 #include <json-c/json.h>
 
 #include "librespot-c-internal.h"
+#include "connection.h"
+#include "channel.h"
+
+/*
+ * Overview of Spotify Connect sequence w/o blob auth
+ *
+ * 1. Log in to AP
+ * 2. Send a Spotify Connect hello() - spirc
+ * 3. Reply to action=getInfo from the Spotify app
+ *
+ */
+
 
 // See https://developer.spotify.com/documentation/commercial-hardware/implementation/guides/zeroconf/
 
@@ -42,23 +57,6 @@
 #define STATUS_INVALIDACTION    302 // ERROR-INVALID-ACTION Web request has unrecognized action parameter
 #define STATUS_INVALIDARGUMENTS 303 // ERROR-INVALID-ARGUMENTS Incorrect or insufficient arguments supplied for requested action
 #define STATUS_SPOTIFYERROR     402 // ERROR-SPOTIFY-ERROR A Spotify API call returned an error not covered by other error messages
-
-/*
-static json_object *
-jparse_obj_from_evbuffer(struct evbuffer *evbuf)
-{
-  char *json_str;
-
-  // 0-terminate for safety
-  evbuffer_add(evbuf, "", 1);
-
-  json_str = (char *) evbuffer_pullup(evbuf, -1);
-  if (!json_str || (strlen(json_str) == 0))
-    return NULL;
-
-  return json_tokener_parse(json_str);
-}
-*/
 
 static void
 jstr_add(json_object *obj, const char *key, const char *value)
@@ -84,11 +82,32 @@ jparse_free(json_object* obj)
   json_object_put(obj);
 }
 
+static int
+response_make(uint8_t **response, size_t *len, json_object *jreply)
+{
+  const char *reply;
+  int ret;
+
+  reply = json_object_to_json_string(jreply);
+  if (!reply)
+    RETURN_ERROR(SP_ERR_INVALID, "Could not create JSON string");
+
+  *len = strlen(reply);
+  *response = strdup(reply);
+  if (!*response)
+    RETURN_ERROR(SP_ERR_OOM, "Out of memory");
+
+  return 0;
+
+ error:
+  return ret;
+}
+
 int
 librespotc_connect_getinfo(uint8_t **response, size_t *len, struct sp_sysinfo *info, struct sp_credentials *credentials)
 {
+#define DUMMY_KEY "cOoqpxJrMI2feE8GBnkSGIp4fDM3ZI+dfWcrX/mjoUxJr1I56C+tS1tu1/VpRclRjbuwlu47LCeY7cC6Ol+ScALHd8S1hoUgKLaM7nYFted488DAHCEXUPMAc6qWObfc"
   json_object *jreply;
-  const char *reply;
   int ret;
 
   jreply = json_object_new_object();
@@ -104,13 +123,13 @@ librespotc_connect_getinfo(uint8_t **response, size_t *len, struct sp_sysinfo *i
   jstr_add(jreply, "deviceType", "SPEAKER");
   jstr_add(jreply, "remoteName", info->speaker_name);
 
-  jstr_add(jreply, "publicKey", "123"); // TODO
+  jstr_add(jreply, "publicKey", DUMMY_KEY); // We aren't doing blob-based auth so don't need a real key
   jstr_add(jreply, "brandDisplayName", info->client_name);
   jstr_add(jreply, "modelDisplayName", info->client_name);
   jstr_add(jreply, "libraryVersion", info->client_version);
   jstr_add(jreply, "resolverVersion", "1");
   jstr_add(jreply, "groupStatus", "NONE");
-  jstr_add(jreply, "tokenType", "default");
+  jstr_add(jreply, "tokenType", "default"); // Spotify example uses "accesstoken"
   jstr_add(jreply, "clientID", info->client_build_id);
   jint_add(jreply, "productID", 0);
   jstr_add(jreply, "scope", "streaming"); // Other known scope: client-authorization-universal
@@ -120,16 +139,72 @@ librespotc_connect_getinfo(uint8_t **response, size_t *len, struct sp_sysinfo *i
   jstr_add(jreply, "accountReq", "PREMIUM"); // undocumented but should still work
   jstr_add(jreply, "activeUser", credentials->username);
 
-  reply = json_object_to_json_string(jreply);
-  if (!reply)
-    RETURN_ERROR(SP_ERR_INVALID, "Could not create JSON string");
-
-  *len = strlen(reply);
-  *response = strdup(reply);
-  if (!*response)
-    RETURN_ERROR(SP_ERR_OOM, "Out of memory");
+  ret = response_make(response, len, jreply);
+  if (ret < 0)
+    goto error;
 
   jparse_free(jreply);
+  return 0;
+
+ error:
+  jparse_free(jreply);
+  return ret;
+#undef DUMMY_KEY
+}
+
+static int
+make_response_adduser(uint8_t **response, size_t *len, char *body, struct sp_credentials *credentials)
+{
+  json_object *jreply;
+  struct evkeyvalq query = { 0 };
+  const char *param;
+  int ret;
+
+  jreply = json_object_new_object();
+  if (!jreply)
+    RETURN_ERROR(SP_ERR_OOM, "Out of memory");
+
+  ret = evhttp_parse_query_str(body, &query);
+  if (ret < 0)
+    RETURN_ERROR(SP_ERR_INVALID, "Spotify Connect unreadable POST request");
+
+  param = evhttp_find_header(&query, "action");
+  if (!param || strcmp(param, "addUser") != 0)
+    RETURN_ERROR(SP_ERR_INVALID, "Spotify Connect unexpected POST request");
+
+  param = evhttp_find_header(&query, "userName");
+  if (!param || strcmp(param, credentials->username) != 0)
+    RETURN_ERROR(SP_ERR_OCCUPIED, "Spotify Connect connecting attempt from user not logged in");
+
+  jint_add(jreply, "status", STATUS_OK);
+  jstr_add(jreply, "statusString", "OK");
+  jint_add(jreply, "spotifyError", 0);
+
+  ret = response_make(response, len, jreply);
+  if (ret < 0)
+    goto error;
+
+  evhttp_clear_headers(&query);
+  jparse_free(jreply);
+  return 0;
+
+ error:
+  evhttp_clear_headers(&query);
+  jparse_free(jreply);
+  return ret;
+}
+
+int
+librespotc_connect_adduser(uint8_t **response, size_t *len, char *body, struct sp_session *session)
+{
+  struct sp_message msg;
+  int ret;
+
+  ret = make_response_adduser(response, len, body, &session->credentials);
+  if (ret < 0)
+    RETURN_ERROR(ret, sp_errmsg);
+
+  RETURN_ERROR(SP_ERR_INVALID, "Spotify Connect adduser not implemented");
 
   return 0;
 
@@ -137,12 +212,23 @@ librespotc_connect_getinfo(uint8_t **response, size_t *len, struct sp_sysinfo *i
   return ret;
 }
 
-/*
 int
-connect_discover_handle_adduser(struct evbuffer *out, struct evbuffer *in)
+librespotc_connect_hello(struct sp_session *session)
 {
-  json_object *haystack;
+  struct sp_message msg;
+  int ret;
 
-  haystack = jparse_obj_from_evbuffer(in);
+  ret = msg_make(&msg, MSG_TYPE_SPIRC_HELLO, session);
+  if (ret < 0)
+    RETURN_ERROR(SP_ERR_INVALID, "Error constructing Spirc hello to Spotify");
+
+
+  ret = msg_send(&msg, &session->conn);
+  if (ret < 0)
+    RETURN_ERROR(ret, sp_errmsg);
+
+  return 0;
+
+ error:
+  return ret;
 }
-*/

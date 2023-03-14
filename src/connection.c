@@ -405,7 +405,7 @@ packet_make_encrypted(uint8_t *out, size_t out_len, uint8_t cmd, const uint8_t *
   ptr += sizeof(be);
   memcpy(ptr, payload, payload_len);
 
-//  sp_cb.hexdump("Encrypting packet\n", out, plain_len);
+  sp_cb.hexdump("Encrypting packet\n", out, plain_len);
 
   pkt_len = crypto_encrypt(out, out_len, plain_len, cipher);
   if (pkt_len < 9)
@@ -768,6 +768,30 @@ response_mercury_req(uint8_t *payload, size_t payload_len, struct sp_session *se
 }
 
 static enum sp_error
+response_mercury_sub(uint8_t *payload, size_t payload_len, struct sp_session *session)
+{
+  struct sp_mercury mercury = { 0 };
+//  struct sp_channel *channel;
+//  uint32_t channel_id;
+  int ret;
+
+  ret = mercury_parse(&mercury, payload, payload_len);
+  if (ret < 0)
+    {
+      sp_errmsg = "Could not parse message from Spotify";
+      return SP_ERR_INVALID;
+    }
+
+  mercury_free(&mercury, 1);
+
+  return SP_OK_DONE;
+
+ error:
+  mercury_free(&mercury, 1);
+  return ret;
+}
+
+static enum sp_error
 response_ping(uint8_t *payload, size_t payload_len, struct sp_session *session)
 {
   msg_pong(session);
@@ -812,14 +836,18 @@ response_generic(uint8_t *msg, size_t msg_len, struct sp_session *session)
 	ret = response_aes_key_error(payload, payload_len, session);
 	break;
       case CmdMercuryReq:
-	ret = response_mercury_req(payload, payload_len, session);
+//	ret = response_mercury_req(payload, payload_len, session);
+	ret = response_mercury_sub(payload, payload_len, session);
+	break;
+      case CmdMercurySub:
+	ret = response_mercury_sub(payload, payload_len, session);
 	break;
       case CmdChannelError:
         ret = response_channel_error(payload, payload_len, session);
         break;
       case CmdLegacyWelcome: // 0 bytes, ignored by librespot
       case CmdSecretBlock: // ignored by librespot
-      case 0x50: // XML received after login, ignored by librespot
+      case CmdProductInfo: // XML received after login, ignored by librespot
       case CmdLicenseVersion: // ignored by librespot
       default:
 	ret = SP_OK_OTHER;
@@ -1210,6 +1238,129 @@ msg_make_mercury_episode_get(uint8_t *out, size_t out_len, struct sp_session *se
 }
 
 static ssize_t
+msg_make_mercury_remote_user_sub(uint8_t *out, size_t out_len, struct sp_session *session)
+{
+  struct sp_mercury mercury = { 0 };
+//  struct sp_channel *channel = XXX;
+  char uri[256];
+
+  snprintf(uri, sizeof(uri), "%s%s/", SP_MERCURY_URI_REMOTE_USER, session->credentials.username);
+
+  mercury.method = "SUB";
+  mercury.seq    = 1; // TODO
+  mercury.uri    = uri;
+
+  return msg_make_mercury_req(out, out_len, &mercury);
+}
+
+
+/* --------------------------------- spirc ---------------------------------- */
+// Ref: http://divideoverflow.com/2014/08/reversing-spotify-connect/
+
+static void
+set_capability_intvalue(Capability *c, CapabilityType typ, int64_t *intvalue)
+{
+  capability__init(c);
+  c->has_typ = 1;
+  c->typ = typ;
+  c->intvalue = intvalue;
+  c->n_intvalue = 1;
+}
+
+static void
+set_capability_strarray(Capability *c, CapabilityType typ, char **stringvalue, size_t n_stringvalue)
+{
+  capability__init(c);
+  c->has_typ = 1;
+  c->typ = typ;
+  c->stringvalue = stringvalue;
+  c->n_stringvalue = n_stringvalue;
+}
+
+static ssize_t
+msg_make_spirc_hello(uint8_t *out, size_t out_len, struct sp_session *session)
+{
+#define SIZE_CAPABILITIES 16
+#define N_SUPPORTED_TYPES 3
+  struct sp_mercury mercury = { 0 };
+  char *supported_types[N_SUPPORTED_TYPES] = { "audio/episode", "audio/episode+track", "audio/track" };
+  Frame frame = FRAME__INIT;
+  DeviceState device_state = DEVICE_STATE__INIT;
+  Capability *capabilities[SIZE_CAPABILITIES];
+  Capability cap_storage[SIZE_CAPABILITIES];
+  int64_t enabled = 1;
+  int64_t disabled = 0;
+  int64_t speaker = 4; // See enum DeviceType in core/src/config.rs
+  int64_t volumesteps = 64; // const VOLUME_STEPS in spirc.rs
+  int n_capabilities = 0;
+  size_t len;
+  uint8_t buf[2048];
+  char uri[256];
+
+  for (int i = 0; i < SIZE_CAPABILITIES; i++)
+    capabilities[i] = &cap_storage[i];
+
+  // See initial_device_state() in spirc.rs
+  // Be sure to check SIZE_CAPABILITIES if you add new capabilities
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kCanBePlayer, &enabled);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kDeviceType, &speaker);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kGaiaEqConnectId, &enabled);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kSupportsLogout, &disabled);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kIsObservable, &enabled);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kVolumeSteps, &volumesteps);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kSupportsPlaylistV2, &enabled);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kSupportsExternalEpisodes, &enabled);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kSupportsRename, &disabled);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kCommandAcks, &disabled);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kRestrictToLocal, &disabled);
+  set_capability_intvalue(capabilities[n_capabilities++], CAPABILITY_TYPE__kHidden, &disabled);
+  set_capability_strarray(capabilities[n_capabilities++], CAPABILITY_TYPE__kSupportedTypes, supported_types, N_SUPPORTED_TYPES);
+
+  device_state.capabilities = capabilities;
+  device_state.n_capabilities = n_capabilities;
+  device_state.sw_version = sp_sysinfo.client_version;
+  device_state.has_is_active = 1;
+  device_state.is_active = 0;
+  device_state.has_can_play = 1;
+  device_state.can_play = 1;
+  device_state.has_volume = 1;
+  device_state.volume = 0;
+  device_state.name = sp_sysinfo.speaker_name;
+
+  frame.has_typ = 1;
+  frame.typ = MESSAGE_TYPE__kMessageTypeHello;
+  frame.has_version = 1;
+  frame.version = 1;
+  frame.protocol_version = "2.0.0";
+  frame.ident = sp_sysinfo.device_id;
+  frame.has_seq_nr = 1;
+  frame.seq_nr = 1; // TODO actually assign channel
+  frame.has_state_update_id = 1;
+  frame.state_update_id = time(NULL); // TODO librespot uses ms
+  frame.device_state = &device_state;
+
+  len = frame__get_packed_size(&frame);
+  if (len > sizeof(buf))
+    return -1;
+
+  frame__pack(&frame, buf);
+
+  mercury.parts_num = 1;
+  mercury.parts[0].len = len;
+  mercury.parts[0].data = buf;
+
+  snprintf(uri, sizeof(uri), "%s%s/", SP_MERCURY_URI_REMOTE_USER, session->credentials.username);
+
+  mercury.method = "SEND";
+  mercury.seq    = 1; // TODO
+  mercury.uri    = uri;
+
+  return msg_make_mercury_req(out, out_len, &mercury);
+#undef N_SUPPORTED_TYPES
+#undef SIZE_CAPABILITIES
+}
+
+static ssize_t
 msg_make_audio_key_get(uint8_t *out, size_t out_len, struct sp_session *session)
 {
   struct sp_channel *channel = session->now_streaming_channel;
@@ -1348,6 +1499,12 @@ msg_make(struct sp_message *msg, enum sp_msg_type type, struct sp_session *sessi
 	msg->type_next = MSG_TYPE_AUDIO_KEY_GET;
 	msg->response_handler = response_generic;
 	break;
+      case MSG_TYPE_SPIRC_HELLO:
+	msg->len = msg_make_spirc_hello(msg->data, sizeof(msg->data), session);
+	msg->cmd = CmdMercuryReq;
+        msg->encrypt = true;
+	msg->response_handler = response_generic;
+	break;
       case MSG_TYPE_AUDIO_KEY_GET:
 	msg->len = msg_make_audio_key_get(msg->data, sizeof(msg->data), session);
 	msg->cmd = CmdRequestKey;
@@ -1394,7 +1551,7 @@ msg_send(struct sp_message *msg, struct sp_connection *conn)
   if (ret != pkt_len)
     RETURN_ERROR(SP_ERR_NOCONNECTION, "Error sending packet to Spotify");
 
-//  sp_cb.logmsg("Sent pkt type %d (cmd=0x%02x) with size %zu (fd=%d)\n", msg->type, msg->cmd, pkt_len, conn->response_fd);
+  sp_cb.logmsg("Sent pkt type %d (cmd=0x%02x) with size %zu (fd=%d)\n", msg->type, msg->cmd, pkt_len, conn->response_fd);
 #else
   ret = debug_mock_response(msg, conn);
   if (ret < 0)

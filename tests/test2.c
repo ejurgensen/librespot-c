@@ -15,22 +15,25 @@
 
 #define LISTEN_PORT 44500
 #define ENDPOINT "/spconnect"
-#define DEVICE_ID "aabbccddeeff"
-#define SPEAKER_NAME "MySpeaker"
+#define DEVICE_ID "0add5a351410381485e36adbb5d6bcbee3be8baa"
+#define SPEAKER_NAME "TestSpeaker"
 
 struct cmdarg
 {
+  struct sp_session *session;
   struct sp_sysinfo *sysinfo;
   struct sp_credentials *credentials;
 };
 
 static void
-request_gen_cb(struct evhttp_request *req, void *arg)
+dump_req(struct evhttp_request *req)
 {
 	const char *cmdtype;
 	struct evkeyvalq *headers;
 	struct evkeyval *header;
 	struct evbuffer *buf;
+	char cbuf[256];
+	int n;
 
 	switch (evhttp_request_get_command(req)) {
 	case EVHTTP_REQ_GET: cmdtype = "GET"; break;
@@ -55,45 +58,113 @@ request_gen_cb(struct evhttp_request *req, void *arg)
 	}
 
 	buf = evhttp_request_get_input_buffer(req);
+	n = evbuffer_copyout(buf, cbuf, sizeof(cbuf));
 	puts("Input data: <<<");
-	while (evbuffer_get_length(buf)) {
-		int n;
-		char cbuf[128];
-		n = evbuffer_remove(buf, cbuf, sizeof(cbuf));
-		if (n > 0)
-			(void) fwrite(cbuf, 1, n, stdout);
-	}
+	if (n > 0)
+		(void) fwrite(cbuf, 1, n, stdout);
 	puts(">>>");
-
-	evhttp_send_reply(req, 200, "OK", NULL);
 }
 
 static void
-handle_getinfo(struct evhttp_request *req, struct sp_sysinfo *sysinfo, struct sp_credentials *credentials)
+request_gen_cb(struct evhttp_request *req, void *arg)
 {
-  struct evbuffer *response;
-  uint8_t *data;
-  size_t data_len;
+  dump_req(req);
+  evhttp_send_reply(req, 200, "OK", NULL);
+}
 
-  librespotc_connect_getinfo(&data, &data_len, sysinfo, credentials);
+static void
+response_json_send(struct evhttp_request *req, uint8_t *data, size_t data_len)
+{
+  struct evbuffer *response = evhttp_request_get_output_buffer(req);
+  char cbuf[256];
+  int n;
 
-  response = evbuffer_new();
   evbuffer_add(response, data, data_len);
+
+  n = evbuffer_copyout(response, cbuf, sizeof(cbuf));
+  puts("Output data: <<<");
+  if (n > 0)
+    (void) fwrite(cbuf, 1, n, stdout);
+  puts(">>>");
 
   evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json");
   evhttp_send_reply(req, 200, "OK", response);
 }
 
 static void
+request_getinfo(struct evhttp_request *req, struct sp_sysinfo *sysinfo, struct sp_credentials *credentials)
+{
+  uint8_t *data;
+  size_t data_len;
+  int ret;
+
+  dump_req(req);
+
+  ret = librespotc_connect_getinfo(&data, &data_len, sysinfo, credentials);
+  if (ret < 0)
+    {
+      printf("Error: %s\n", librespotc_last_errmsg());
+      goto error;
+    }
+
+  response_json_send(req, data, data_len);
+  return;
+
+ error:
+  evhttp_send_error(req, 500, "Internal error");
+}
+
+static void
+request_adduser(struct evhttp_request *req, struct sp_session *session)
+{
+  struct evbuffer *buf;
+  struct evbuffer *response;
+  char *body;
+  uint8_t *data;
+  size_t data_len;
+  int ret;
+
+  dump_req(req);
+
+  buf = evhttp_request_get_input_buffer(req);
+  if (!buf)
+    goto error;
+
+  // 0-terminate for safety
+  evbuffer_add(buf, "", 1);
+
+  body = (char *) evbuffer_pullup(buf, -1);
+  if (!body)
+    goto error;
+
+  ret = librespotc_connect_adduser(&data, &data_len, body, session);
+  if (ret < 0)
+    {
+      printf("Error: %s\n", librespotc_last_errmsg());
+      goto error;
+    }
+
+  response_json_send(req, data, data_len);
+  return;
+
+ error:
+  evhttp_send_error(req, 500, "Internal Server Error");
+}
+
+static void
 request_spconnect_cb(struct evhttp_request *req, void *arg)
 {
   struct cmdarg *cbarg = arg;
+  enum evhttp_cmd_type method;
   const char *uri;
 
+  method = evhttp_request_get_command(req);
   uri = evhttp_request_get_uri(req);
 
-  if (strstr(uri, "action=getInfo") > 0)
-    handle_getinfo(req, cbarg->sysinfo, cbarg->credentials);
+  if (method == EVHTTP_REQ_GET && strstr(uri, "action=getInfo") > 0)
+    request_getinfo(req, cbarg->sysinfo, cbarg->credentials);
+  else if (method == EVHTTP_REQ_POST)
+    request_adduser(req, cbarg->session);
   else
     request_gen_cb(req, arg);
 }
@@ -157,11 +228,10 @@ main(int argc, char * argv[])
       goto error;
     }
 
-/*
-  if (strlen(argv[3]) < 100)
-    session = librespotc_login_password(argv[2], argv[3]);
+  if (strlen(argv[2]) < 100)
+    session = librespotc_login_password(argv[1], argv[2]);
   else
-    session = librespotc_login_token(argv[2], argv[3]); // Length of token should be 194
+    session = librespotc_login_token(argv[1], argv[2]); // Length of token should be 194
   if (!session)
     {
       printf("Error logging in: %s\n", librespotc_last_errmsg());
@@ -178,13 +248,21 @@ main(int argc, char * argv[])
     }
 
   printf("Username is %s\n", credentials.username);
-*/
+
+  ret = librespotc_connect_hello(session);
+  if (ret < 0)
+    {
+      printf("Error sending Spotify Connect hello: %s\n", librespotc_last_errmsg());
+      goto error;
+    }
+
   evbase = event_base_new();
 
   // Create a http server
   evhttp = evhttp_new(evbase);
   cbarg.sysinfo = &sysinfo;
   cbarg.credentials = &credentials;
+  cbarg.session = session;
   evhttp_set_cb(evhttp, ENDPOINT, request_spconnect_cb, &cbarg);
   evhttp_set_gencb(evhttp, request_gen_cb, NULL);
   ret = evhttp_bind_socket(evhttp, "0.0.0.0", LISTEN_PORT);
