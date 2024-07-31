@@ -11,7 +11,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: build tools
       run: brew install automake autoconf pkg-config
     - name: dependencies (core)
@@ -20,6 +20,8 @@ jobs:
       run: brew install curl
     - name: configure
       run: |
+        export CFLAGS="-I$(brew --prefix)/include"
+        export LDFLAGS="-L$(brew --prefix)/lib"
         autoreconf -vi
         ./configure
     - name: build
