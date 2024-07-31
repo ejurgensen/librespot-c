@@ -241,20 +241,15 @@ main(int argc, char * argv[])
   struct sp_credentials credentials;
   struct sp_metadata metadata;
   struct event *read_ev;
+  uint8_t stored_cred[256];
+  size_t stored_cred_len;
 //  struct event *stop_ev;
 //  struct timeval tv = { 0 };
   int ret;
 
   if (argc != 4)
     {
-      printf("%s spotify_path username password|token\n", argv[0]);
-      goto error;
-    }
-
-  test_file = open("testfile.ogg", O_CREAT | O_RDWR, 0664);
-  if (test_file < 0)
-    {
-      printf("Error opening file: %s\n", strerror(errno));
+      printf("%s spotify_path username access_token\n", argv[0]);
       goto error;
     }
 
@@ -268,17 +263,14 @@ main(int argc, char * argv[])
       goto error;
     }
 
-  if (strlen(argv[3]) < 100)
-    session = librespotc_login_password(argv[2], argv[3]);
-  else
-    session = librespotc_login_token(argv[2], argv[3]); // Length of token should be 194
+  session = librespotc_login_token(argv[2], argv[3]);
   if (!session)
     {
-      printf("Error logging in: %s\n", librespotc_last_errmsg());
+      printf("Error logging in with token: %s\n", librespotc_last_errmsg());
       goto error;
     }
 
-  printf("\n --- Login OK --- \n");
+  printf("\n--- Login with token OK ---\n\n");
 
   ret = librespotc_credentials_get(&credentials, session);
   if (ret < 0)
@@ -287,7 +279,30 @@ main(int argc, char * argv[])
       goto error;
     }
 
-  printf("Username is %s\n", credentials.username);
+  printf("=== CREDENTIALS ===\n");
+  printf("Username:\n%s\n", credentials.username);
+  hexdump("Stored credentials:\n", credentials.stored_cred, credentials.stored_cred_len);
+  printf("===================\n");
+
+  // "Store" the credentials
+  stored_cred_len = credentials.stored_cred_len;
+  if (stored_cred_len > sizeof(stored_cred))
+    {
+      printf("Unexpected length of stored credentials\n");
+      goto error;
+    }
+  memcpy(stored_cred, credentials.stored_cred, stored_cred_len);
+
+  librespotc_logout(session);
+
+  session = librespotc_login_stored_cred(argv[2], stored_cred, stored_cred_len);
+  if (!session)
+    {
+      printf("Error logging in with stored credentials: %s\n", librespotc_last_errmsg());
+      goto error;
+    }
+
+  printf("\n--- Login with stored credentials OK ---\n\n");
 
   audio_fd = librespotc_open(argv[1], session);
   if (audio_fd < 0)
@@ -312,6 +327,13 @@ main(int argc, char * argv[])
       goto error;
     }
 
+  test_file = open("testfile.ogg", O_CREAT | O_RDWR, 0664);
+  if (test_file < 0)
+    {
+      printf("Error opening testfile.ogg: %s\n", strerror(errno));
+      goto error;
+    }
+
   evbase = event_base_new();
   audio_buf = evbuffer_new();
 
@@ -329,13 +351,13 @@ main(int argc, char * argv[])
 //  event_free(stop_ev);
   event_free(read_ev);
 
+  close(test_file);
+
   evbuffer_free(audio_buf);
 
   event_base_free(evbase);
 
   librespotc_close(audio_fd);
-
-  close(test_file);
 
   librespotc_logout(session);
 
@@ -344,10 +366,10 @@ main(int argc, char * argv[])
   return 0;
 
  error:
-  if (audio_fd >= 0)
-    librespotc_close(audio_fd);
   if (test_file >= 0)
     close(test_file);
+  if (audio_fd >= 0)
+    librespotc_close(audio_fd);
   if (session)
     librespotc_logout(session);
 
