@@ -953,11 +953,11 @@ system_info_set(struct sp_sysinfo *si_out, struct sp_sysinfo *si_user)
 {
   memcpy(si_out, si_user, sizeof(struct sp_sysinfo));
 
-  if (si_out->client_name[9] == '\0')
+  if (si_out->client_name[0] == '\0')
     snprintf(si_out->client_name, sizeof(si_out->client_name), SP_CLIENT_NAME_DEFAULT);
-  if (si_out->client_version[9] == '\0')
+  if (si_out->client_version[0] == '\0')
     snprintf(si_out->client_version, sizeof(si_out->client_version), SP_CLIENT_VERSION_DEFAULT);
-  if (si_out->client_build_id[9] == '\0')
+  if (si_out->client_build_id[0] == '\0')
     snprintf(si_out->client_build_id, sizeof(si_out->client_build_id), SP_CLIENT_BUILD_ID_DEFAULT);
 }
 

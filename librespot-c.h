@@ -6,7 +6,7 @@
 #include <pthread.h>
 
 #define LIBRESPOT_C_VERSION_MAJOR 0
-#define LIBRESPOT_C_VERSION_MINOR 2
+#define LIBRESPOT_C_VERSION_MINOR 3
 
 
 struct sp_session;
@@ -112,5 +112,8 @@ librespotc_init(struct sp_sysinfo *sysinfo, struct sp_callbacks *callbacks);
 
 void
 librespotc_deinit(void);
+
+int
+librespot_http_test(void);
 
 #endif /* !__LIBRESPOT_C_H__ */

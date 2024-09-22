@@ -11,13 +11,22 @@ PROTO_SRC = \
 	src/proto/mercury.pb-c.c src/proto/mercury.pb-c.h \
 	src/proto/metadata.pb-c.c src/proto/metadata.pb-c.h
 
+HTTP_PROTO_SRC = \
+	src/proto/connectivity.pb-c.c src/proto/connectivity.pb-c.h \
+	src/proto/clienttoken.pb-c.c src/proto/clienttoken.pb-c.h
+
 CORE_SRC = \
 	src/librespot-c.c src/connection.c src/channel.c src/crypto.c src/commands.c
+
+HTTP_SRC = \
+        src/dl.c
 
 librespot_c_a_SOURCES =  \
 	$(CORE_SRC)      \
 	$(SHANNON_SRC)   \
-	$(PROTO_SRC)
+	$(PROTO_SRC)     \
+	$(HTTP_PROTO_SRC) \
+	$(HTTP_SRC)
 
 noinst_HEADERS =	 \
 	librespot-c.h src/librespot-c-internal.h src/connection.h \
