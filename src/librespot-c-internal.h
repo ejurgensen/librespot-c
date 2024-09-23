@@ -358,7 +358,7 @@ struct sp_session
 
 struct sp_err_map
 {
-  ErrorCode errorcode;
+  int errorcode;
   const char *errmsg;
 };
 

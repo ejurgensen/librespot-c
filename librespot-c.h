@@ -114,6 +114,6 @@ void
 librespotc_deinit(void);
 
 int
-librespot_http_test(void);
+librespot_http_test(const char *username, uint8_t *stored_cred, size_t stored_cred_len);
 
 #endif /* !__LIBRESPOT_C_H__ */

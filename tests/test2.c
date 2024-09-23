@@ -75,19 +75,18 @@ main(int argc, char * argv[])
 //  struct sp_credentials credentials;
 //  struct sp_metadata metadata;
 //  struct event *read_ev;
-//  uint8_t stored_cred[256];
-//  size_t stored_cred_len;
+  FILE *f_stored_cred = NULL;
+  uint8_t stored_cred[256];
+  size_t stored_cred_len;
 //  struct event *stop_ev;
 //  struct timeval tv = { 0 };
   int ret;
 
-/*
   if (argc != 4)
     {
-      printf("%s spotify_path username access_token\n", argv[0]);
+      printf("%s spotify_path username stored_credentials_file\n", argv[0]);
       goto error;
     }
-*/
 
   snprintf(sysinfo.device_id, sizeof(sysinfo.device_id), "622682995d5c1db29722de8dd85f6c3acd6fc591");
   snprintf(sysinfo.client_version, sizeof(sysinfo.client_version), "0.0.0");
@@ -99,11 +98,26 @@ main(int argc, char * argv[])
       goto error;
     }
 
-  ret = librespot_http_test();
+  f_stored_cred = fopen(argv[3], "rb");
+  if (!f_stored_cred)
+    {
+      printf("Error opening file with stored credentials\n");
+      goto error;
+    }
+
+  stored_cred_len = fread(stored_cred, 1, sizeof(stored_cred), f_stored_cred);
+  if (stored_cred_len == 0)
+    {
+      printf("Stored credentials file is empty\n");
+      goto error;
+    }
+
+  ret = librespot_http_test(argv[2], stored_cred, stored_cred_len);
 
   printf("%d\n", ret);
 
  error:
+  fclose(f_stored_cred);
   librespotc_deinit();
   return ret;
 }

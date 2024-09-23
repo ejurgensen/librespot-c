@@ -26,6 +26,23 @@
 
 #define SPOTIFY_CLIENT_ID_HEX "65b708073fc0480ea92a077233ca87bd" // ClientIdHex from client_id.go
 
+static struct sp_err_map warning_map[] = {
+  { SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__WARNINGS__UNKNOWN_WARNING, "Unknown warning" },
+  { SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__WARNINGS__DEPRECATED_PROTOCOL_VERSION, "Deprecated protocol" },
+};
+
+static struct sp_err_map error_map[] = {
+  { SPOTIFY__LOGIN5__V3__LOGIN_ERROR__UNKNOWN_ERROR, "Unknown error" },
+  { SPOTIFY__LOGIN5__V3__LOGIN_ERROR__INVALID_CREDENTIALS, "Invalid credentials" },
+  { SPOTIFY__LOGIN5__V3__LOGIN_ERROR__BAD_REQUEST, "Bad request" },
+  { SPOTIFY__LOGIN5__V3__LOGIN_ERROR__UNSUPPORTED_LOGIN_PROTOCOL, "Unsupported login protocol" },
+  { SPOTIFY__LOGIN5__V3__LOGIN_ERROR__TIMEOUT, "Timeout" },
+  { SPOTIFY__LOGIN5__V3__LOGIN_ERROR__UNKNOWN_IDENTIFIER, "Unknown identifier" },
+  { SPOTIFY__LOGIN5__V3__LOGIN_ERROR__TOO_MANY_ATTEMPTS, "Too many attempts" },
+  { SPOTIFY__LOGIN5__V3__LOGIN_ERROR__INVALID_PHONENUMBER, "Invalid phonenumber" },
+  { SPOTIFY__LOGIN5__V3__LOGIN_ERROR__TRY_AGAIN_LATER, "Try again later" },
+};
+
 struct http_client_req
 {
   char *user_agent;
@@ -55,7 +72,20 @@ struct token
 struct http_session
 {
   struct token clienttoken;
+  struct token accesstoken;
 };
+
+static const char *
+err2txt(int err, struct sp_err_map *map, size_t map_size)
+{
+  for (int i = 0; i < map_size; i++)
+    {
+      if (err == map[i].errorcode)
+        return map[i].errmsg;
+    }
+
+  return "(unknown error code)";
+}
 
 static size_t
 curl_request_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
@@ -217,31 +247,41 @@ msg_make_clienttoken(uint8_t *out, size_t out_len)
 
 // Ref. login5/login5.go
 static ssize_t
-msg_make_login5(uint8_t *out, size_t out_len)
+msg_make_login5(uint8_t *out, size_t out_len, const char *username, uint8_t *stored_cred, size_t stored_cred_len)
 {
   Spotify__Login5__V3__LoginRequest req = SPOTIFY__LOGIN5__V3__LOGIN_REQUEST__INIT;
   Spotify__Login5__V3__ClientInfo client_info = SPOTIFY__LOGIN5__V3__CLIENT_INFO__INIT;
   Spotify__Login5__V3__Credentials__StoredCredential stored_credential = SPOTIFY__LOGIN5__V3__CREDENTIALS__STORED_CREDENTIAL__INIT;
+  ssize_t len;
 
   client_info.client_id = SPOTIFY_CLIENT_ID_HEX;
   client_info.device_id = sp_sysinfo.device_id;
 
   req.client_info = &client_info;
 
-  stored_credential.username = "abc";
-  stored_credential.data.len = 3;
-  stored_credential.data.data = "123";
+  stored_credential.username = (char *)username;
+  stored_credential.data.data = stored_cred;
+  stored_credential.data.len = stored_cred_len;
 
   req.login_method_case = SPOTIFY__LOGIN5__V3__LOGIN_REQUEST__LOGIN_METHOD_STORED_CREDENTIAL;
   req.stored_credential = &stored_credential;
 
-  return 0;
+  len = spotify__login5__v3__login_request__get_packed_size(&req);
+  if (len > out_len)
+    {
+      return -1;
+    }
+
+  spotify__login5__v3__login_request__pack(&req, out);
+
+  return len;
 }
 
 static int
-response_read_clienttoken(struct token *clienttoken, uint8_t *in, size_t in_len)
+response_read_clienttoken(struct http_session *session, uint8_t *in, size_t in_len)
 {
-  Spotify__Clienttoken__Http__V0__ClientTokenResponse *response = NULL;
+  struct token *token = &session->clienttoken;
+  Spotify__Clienttoken__Http__V0__ClientTokenResponse *response;
 
   response = spotify__clienttoken__http__v0__client_token_response__unpack(NULL, in_len, in);
   if (!response)
@@ -249,10 +289,10 @@ response_read_clienttoken(struct token *clienttoken, uint8_t *in, size_t in_len)
 
   if (response->response_type == SPOTIFY__CLIENTTOKEN__HTTP__V0__CLIENT_TOKEN_RESPONSE_TYPE__RESPONSE_GRANTED_TOKEN_RESPONSE)
     {
-      snprintf(clienttoken->value, sizeof(clienttoken->value), "%s", response->granted_token->token);
+      snprintf(token->value, sizeof(token->value), "%s", response->granted_token->token);
       // TODO check truncation
-      clienttoken->expires_after_seconds = response->granted_token->expires_after_seconds;
-      clienttoken->refresh_after_seconds = response->granted_token->refresh_after_seconds;
+      token->expires_after_seconds = response->granted_token->expires_after_seconds;
+      token->refresh_after_seconds = response->granted_token->refresh_after_seconds;
     }
   else if (response->response_type == SPOTIFY__CLIENTTOKEN__HTTP__V0__CLIENT_TOKEN_RESPONSE_TYPE__RESPONSE_CHALLENGES_RESPONSE)
   {
@@ -270,19 +310,57 @@ response_read_clienttoken(struct token *clienttoken, uint8_t *in, size_t in_len)
   return -1;
 }  
 
+static int
+response_read_login5(struct http_session *session, uint8_t *in, size_t in_len)
+{
+  struct token *token = &session->accesstoken;
+  Spotify__Login5__V3__LoginResponse *response;
+
+  response = spotify__login5__v3__login_response__unpack(NULL, in_len, in);
+  if (!response)
+    goto error;
+
+  if (response->n_warnings > 0)
+    printf("Got %zu login warnings, first was %d\n", response->n_warnings, response->warnings[0]);
+
+  switch (response->response_case)
+    {
+      case SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__RESPONSE_OK:
+        printf("Login ok, access token %s\n", response->ok->access_token);
+        snprintf(token->value, sizeof(token->value), "%s", response->ok->access_token);
+        // TODO check truncation
+        token->expires_after_seconds = response->ok->access_token_expires_in;
+        break;
+      case SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__RESPONSE_ERROR:
+        printf("Login error: %s\n", err2txt(response->error, error_map, sizeof(error_map)/sizeof(error_map[0])));
+        break;
+      case SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__RESPONSE_CHALLENGES:
+        printf("Login %zu challenges\n", response->challenges->n_challenges);
+        // TODO support hashcash challenges
+        break;
+    }
+
+  spotify__login5__v3__login_response__free_unpacked(response, NULL);
+  return 0;
+
+ error:
+  spotify__login5__v3__login_response__free_unpacked(response, NULL);
+  return -1;
+}
+
 int
-librespot_http_test(void)
+librespot_http_test(const char *username, uint8_t *stored_cred, size_t stored_cred_len)
 {
   struct http_client_req req = { 0 };
   struct http_session session = { 0 };
   int ret;
   uint8_t *msg;
   size_t msg_len = 8192;
+  uint8_t *in;
+  size_t in_len;
   ssize_t len;
 
   msg = malloc(msg_len);
-
-// Generate deviceId, a 20 byte hex string, e.g. 622682995d5c1db29722de8dd85f6c3acd6fc591
 
   len = msg_make_clienttoken(msg, msg_len);
 
@@ -294,7 +372,6 @@ librespot_http_test(void)
 
   sp_cb.hexdump("ClientToken request\n", req.output_data, req.output_data_len);
 
-//  req.url = "http://gyfgafguf.dk/skibidi";
   req.user_agent = "librespot1.2.3";
   req.output_headers[0] = "Accept: application/x-protobuf";
   req.output_headers[1] = "Content-Type: application/x-protobuf";
@@ -306,29 +383,43 @@ librespot_http_test(void)
   if (req.response_code != 200)
     goto error;
 
-  uint8_t *in = evbuffer_pullup(req.input_body, -1);
-  size_t in_len = evbuffer_get_length(req.input_body);
+  in = evbuffer_pullup(req.input_body, -1);
+  in_len = evbuffer_get_length(req.input_body);
 
-  ret = response_read_clienttoken(&session.clienttoken, in, in_len);
+  ret = response_read_clienttoken(&session, in, in_len);
   if (ret < 0)
     goto error;
 
   evbuffer_drain(req.input_body, -1);
 
   req.url = "https://login5.spotify.com/v3/login";
+//  req.url = "http://gyfgafguf.dk/skibidi";
 
   char header[600];
   snprintf(header, sizeof(header), "Client-Token: %s", session.clienttoken.value);
   req.output_headers[2] = header;
 
-  len = msg_make_login5(msg, msg_len);
+  len = msg_make_login5(msg, msg_len, username, stored_cred, stored_cred_len);
 
   req.output_data = msg;
   req.output_data_len = len;
 
   sp_cb.hexdump("Login5 request\n", req.output_data, req.output_data_len);
 
-//  ret = http_client_request(req);
+  ret = http_client_request(&req, NULL);
+
+  printf("Result of request is %d\n", req.response_code);
+  if (req.response_code != 200)
+    goto error;
+
+  in = evbuffer_pullup(req.input_body, -1);
+  in_len = evbuffer_get_length(req.input_body);
+
+  ret = response_read_login5(&session, in, in_len);
+  if (ret < 0)
+    goto error;
+
+  evbuffer_drain(req.input_body, -1);
 
  error:
   return ret;

@@ -13,7 +13,15 @@ PROTO_SRC = \
 
 HTTP_PROTO_SRC = \
 	src/proto/connectivity.pb-c.c src/proto/connectivity.pb-c.h \
-	src/proto/clienttoken.pb-c.c src/proto/clienttoken.pb-c.h
+	src/proto/clienttoken.pb-c.c src/proto/clienttoken.pb-c.h \
+	src/proto/login5_user_info.pb-c.h src/proto/login5_user_info.pb-c.c \
+	src/proto/login5.pb-c.h src/proto/login5.pb-c.c \
+	src/proto/login5_identifiers.pb-c.h src/proto/login5_identifiers.pb-c.c \
+	src/proto/login5_credentials.pb-c.h src/proto/login5_credentials.pb-c.c \
+	src/proto/login5_client_info.pb-c.h src/proto/login5_client_info.pb-c.c \
+	src/proto/login5_challenges_hashcash.pb-c.h src/proto/login5_challenges_hashcash.pb-c.c \
+	src/proto/login5_challenges_code.pb-c.h src/proto/login5_challenges_code.pb-c.c \
+	src/proto/google_duration.pb-c.h src/proto/google_duration.pb-c.c
 
 CORE_SRC = \
 	src/librespot-c.c src/connection.c src/channel.c src/crypto.c src/commands.c
