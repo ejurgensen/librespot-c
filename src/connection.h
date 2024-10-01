@@ -2,10 +2,7 @@ void
 ap_disconnect(struct sp_connection *conn);
 
 enum sp_error
-ap_connect(struct sp_connection *conn, enum sp_msg_type type, time_t *cooldown_ts, const char *ap_address, struct sp_conn_callbacks *cb, void *cb_arg);
-
-const char *
-ap_address_get(struct sp_connection *conn);
+ap_connect(struct sp_connection *conn, struct sp_server *server, enum sp_msg_type type, time_t *cooldown_ts, struct sp_conn_callbacks *cb, void *cb_arg);
 
 enum sp_error
 response_read(struct sp_session *session);

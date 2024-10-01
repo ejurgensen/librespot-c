@@ -54,6 +54,7 @@ events for proceeding are activated directly.
 #include "commands.h"
 #include "connection.h"
 #include "channel.h"
+#include "apresolve.h"
 
 // #define DEBUG_DISCONNECT 1
 
@@ -97,7 +98,6 @@ session_free(struct sp_session *session)
 
   event_free(session->continue_ev);
 
-  free(session->ap_avoid);
   free(session);
 }
 
@@ -250,15 +250,13 @@ session_retry(struct sp_session *session)
 {
   struct sp_channel *channel = session->now_streaming_channel;
   enum sp_msg_type type = session->msg_type_last;
-  const char *ap_address = ap_address_get(&session->conn);
   int ret;
 
   sp_cb.logmsg("Retrying after disconnect (occurred at msg %d)\n", type);
 
   channel_retry(channel);
 
-  free(session->ap_avoid);
-  session->ap_avoid = strdup(ap_address);
+  apresolve_server_mark_failed(session->conn.server);
 
   ap_disconnect(&session->conn);
 
@@ -449,7 +447,7 @@ request_make(enum sp_msg_type type, struct sp_session *session)
 //  sp_cb.logmsg("Making request %d\n", type);
 
   // Make sure the connection is in a state suitable for sending this message
-  ret = ap_connect(&session->conn, type, &session->cooldown_ts, session->ap_avoid, &cb, session);
+  ret = ap_connect(conn, &session->accesspoint, type, &session->cooldown_ts, &cb, session);
   if (ret == SP_OK_WAIT)
     return relogin(type, session); // Can't proceed right now, the handshake needs to complete first
   else if (ret < 0)
@@ -686,6 +684,10 @@ login(void *arg, int *retval)
   int ret;
 
   ret = session_new(&session, cmdargs, continue_cb);
+  if (ret < 0)
+    goto error;
+
+  ret = apresolve_server_get(&session->accesspoint, &session->spclient, &session->dealer);
   if (ret < 0)
     goto error;
 

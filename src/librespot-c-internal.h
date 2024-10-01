@@ -35,9 +35,6 @@
 #include "proto/mercury.pb-c.h"
 #include "proto/metadata.pb-c.h"
 
-#define SP_AP_RESOLVE_URL "https://APResolve.spotify.com/"
-#define SP_AP_RESOLVE_KEY "ap_list"
-
 // Disconnect from AP after this number of secs idle
 #define SP_AP_DISCONNECT_SECS 60
 
@@ -207,14 +204,21 @@ struct sp_message
   uint8_t data[4096];
 };
 
+struct sp_server
+{
+  char *address; // e.g. ap-gue1.spotify.com
+  unsigned short port; // normally 433 or 4070
+  time_t last_connect_ts;
+  time_t last_resolved_ts;
+  time_t last_failed_ts;
+};
+
 struct sp_connection
 {
+  struct sp_server *server; // NULL or pointer to session.accesspoint
+
   bool is_connected;
   bool is_encrypted;
-
-  // Resolved access point
-  char *ap_address;
-  unsigned short ap_port;
 
   // Where we receive data from Spotify
   int response_fd;
@@ -326,11 +330,12 @@ struct sp_channel
 // Linked list of sessions
 struct sp_session
 {
+  struct sp_server accesspoint;
+  struct sp_server spclient;
+  struct sp_server dealer;
+
   struct sp_connection conn;
   time_t cooldown_ts;
-
-  // Address of an access point we want to avoid due to previous failure
-  char *ap_avoid;
 
   bool is_logged_in;
   struct sp_credentials credentials;

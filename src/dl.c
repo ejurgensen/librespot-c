@@ -9,7 +9,6 @@
 #include <errno.h>
 
 #include <json-c/json.h>
-#include <curl/curl.h>
 #include <event2/event.h>
 #include <event2/buffer.h>
 
@@ -19,10 +18,9 @@
 
 #include "proto/clienttoken.pb-c.h"
 #include "proto/login5.pb-c.h"
+#include "proto/storage_resolve.pb-c.h"
 #include "librespot-c-internal.h"
-
-#define MAX_HEADERS 16
-#define HTTP_CLIENT_TIMEOUT 5
+#include "http.h"
 
 #define SPOTIFY_CLIENT_ID_HEX "65b708073fc0480ea92a077233ca87bd" // ClientIdHex from client_id.go
 
@@ -43,25 +41,6 @@ static struct sp_err_map error_map[] = {
   { SPOTIFY__LOGIN5__V3__LOGIN_ERROR__TRY_AGAIN_LATER, "Try again later" },
 };
 
-struct http_client_req
-{
-  char *user_agent;
-  char *url;
-  char *output_headers[MAX_HEADERS];
-  uint8_t *output_data;
-  size_t output_data_len;
-
-  bool headers_only;
-
-  struct evbuffer *input_body;
-  int response_code;
-};
-
-struct http_client_session
-{
-  CURL *curl;
-};
-
 struct token
 {
   char value[512]; // base64 string, actual size 360 bytes
@@ -69,7 +48,7 @@ struct token
   int32_t refresh_after_seconds;
 };
 
-struct http_session
+struct sp_http_session
 {
   struct token clienttoken;
   struct token accesstoken;
@@ -87,6 +66,7 @@ err2txt(int err, struct sp_err_map *map, size_t map_size)
   return "(unknown error code)";
 }
 
+/*
 static size_t
 curl_request_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
@@ -149,8 +129,11 @@ http_client_request(struct http_client_req *req, struct http_client_session *ses
   if (headers)
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req->output_data);
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, req->output_data_len);
+  if (req->output_data_len > 0)
+    {
+      curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req->output_data);
+      curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, req->output_data_len);
+    }
 
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, HTTP_CLIENT_TIMEOUT);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_request_cb);
@@ -176,7 +159,11 @@ http_client_request(struct http_client_req *req, struct http_client_session *ses
 
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
   req->response_code = (int) response_code;
-//  curl_headers_save(req->input_headers, curl);
+
+  curl_off_t cl;
+  res = curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &cl);
+  if (!res)
+    req->content_length = (ssize_t)cl;
 
   curl_slist_free_all(headers);
   if (!session)
@@ -186,6 +173,7 @@ http_client_request(struct http_client_req *req, struct http_client_session *ses
 
   return 0;
 }
+*/
 
 // Ref. session/clienttoken.go
 static ssize_t
@@ -278,7 +266,7 @@ msg_make_login5(uint8_t *out, size_t out_len, const char *username, uint8_t *sto
 }
 
 static int
-response_read_clienttoken(struct http_session *session, uint8_t *in, size_t in_len)
+response_read_clienttoken(struct sp_http_session *session, uint8_t *in, size_t in_len)
 {
   struct token *token = &session->clienttoken;
   Spotify__Clienttoken__Http__V0__ClientTokenResponse *response;
@@ -311,7 +299,7 @@ response_read_clienttoken(struct http_session *session, uint8_t *in, size_t in_l
 }  
 
 static int
-response_read_login5(struct http_session *session, uint8_t *in, size_t in_len)
+response_read_login5(struct sp_http_session *session, uint8_t *in, size_t in_len)
 {
   struct token *token = &session->accesstoken;
   Spotify__Login5__V3__LoginResponse *response;
@@ -348,11 +336,45 @@ response_read_login5(struct http_session *session, uint8_t *in, size_t in_len)
   return -1;
 }
 
+static int
+response_read_storageresolve(char **url, uint8_t *in, size_t in_len)
+{
+  Spotify__Download__Proto__StorageResolveResponse *response;
+
+  response = spotify__download__proto__storage_resolve_response__unpack(NULL, in_len, in);
+  if (!response)
+    goto error;
+
+  switch (response->result)
+    {
+      case SPOTIFY__DOWNLOAD__PROTO__STORAGE_RESOLVE_RESPONSE__RESULT__CDN:
+        printf("Got %zu CDN, first is %s\n", response->n_cdnurl, response->cdnurl[0]);
+        *url = strdup(response->cdnurl[0]);
+        break;
+      case SPOTIFY__DOWNLOAD__PROTO__STORAGE_RESOLVE_RESPONSE__RESULT__STORAGE:
+        printf("Legacy storage format\n");
+        goto error;
+        break;
+      case SPOTIFY__DOWNLOAD__PROTO__STORAGE_RESOLVE_RESPONSE__RESULT__RESTRICTED:
+        printf("Restricted access\n");
+        goto error;
+        break;
+    }
+
+  spotify__download__proto__storage_resolve_response__free_unpacked(response, NULL);
+  return 0;
+
+ error:
+  spotify__download__proto__storage_resolve_response__free_unpacked(response, NULL);
+  return -1;
+}
+
 int
 librespot_http_test(const char *username, uint8_t *stored_cred, size_t stored_cred_len)
 {
-  struct http_client_req req = { 0 };
-  struct http_session session = { 0 };
+  struct http_request request = { .user_agent = "librespot1.2.3" };
+  struct http_response response = { 0 };
+  struct sp_http_session session = { 0 };
   int ret;
   uint8_t *msg;
   size_t msg_len = 8192;
@@ -362,70 +384,117 @@ librespot_http_test(const char *username, uint8_t *stored_cred, size_t stored_cr
 
   msg = malloc(msg_len);
 
+  // Get client token
   len = msg_make_clienttoken(msg, msg_len);
 
-  req.url = "https://clienttoken.spotify.com/v1/clienttoken";
-  req.output_data = msg;
-  req.output_data_len = len;
+  request.url = "https://clienttoken.spotify.com/v1/clienttoken";
+  request.body = msg;
+  request.body_len = len;
 
-  req.input_body = evbuffer_new();
+  request.headers[0] = "Accept: application/x-protobuf";
+  request.headers[1] = "Content-Type: application/x-protobuf";
 
-  sp_cb.hexdump("ClientToken request\n", req.output_data, req.output_data_len);
+  sp_cb.hexdump("ClientToken request\n", request.body, request.body_len);
 
-  req.user_agent = "librespot1.2.3";
-  req.output_headers[0] = "Accept: application/x-protobuf";
-  req.output_headers[1] = "Content-Type: application/x-protobuf";
-  ret = http_client_request(&req, NULL);
+  ret = http_request(&response, &request, NULL);
   if (ret < 0)
     goto error;
 
-  printf("Result of request is %d\n", req.response_code);
-  if (req.response_code != 200)
+  printf("Result of request is %d\n", response.code);
+  if (response.code != 200)
     goto error;
 
-  in = evbuffer_pullup(req.input_body, -1);
-  in_len = evbuffer_get_length(req.input_body);
-
-  ret = response_read_clienttoken(&session, in, in_len);
+  ret = response_read_clienttoken(&session, response.body, response.body_len);
   if (ret < 0)
     goto error;
 
-  evbuffer_drain(req.input_body, -1);
+  free(response.body);
+  response.body_len = 0;
 
-  req.url = "https://login5.spotify.com/v3/login";
-//  req.url = "http://gyfgafguf.dk/skibidi";
-
-  char header[600];
-  snprintf(header, sizeof(header), "Client-Token: %s", session.clienttoken.value);
-  req.output_headers[2] = header;
-
+  // Get access token
   len = msg_make_login5(msg, msg_len, username, stored_cred, stored_cred_len);
 
-  req.output_data = msg;
-  req.output_data_len = len;
+  request.url = "https://login5.spotify.com/v3/login";
+  request.body = msg;
+  request.body_len = len;
 
-  sp_cb.hexdump("Login5 request\n", req.output_data, req.output_data_len);
+  char clienttoken[600];
+  snprintf(clienttoken, sizeof(clienttoken), "Client-Token: %s", session.clienttoken.value);
+  request.headers[2] = clienttoken;
 
-  ret = http_client_request(&req, NULL);
+  sp_cb.hexdump("Login5 request\n", request.body, request.body_len);
 
-  printf("Result of request is %d\n", req.response_code);
-  if (req.response_code != 200)
-    goto error;
-
-  in = evbuffer_pullup(req.input_body, -1);
-  in_len = evbuffer_get_length(req.input_body);
-
-  ret = response_read_login5(&session, in, in_len);
+  ret = http_request(&response, &request, NULL);
   if (ret < 0)
     goto error;
 
-  evbuffer_drain(req.input_body, -1);
+  printf("Result of request is %d\n", response.code);
+  if (response.code != 200)
+    goto error;
+
+  ret = response_read_login5(&session, response.body, response.body_len);
+  if (ret < 0)
+    goto error;
+
+  free(response.body);
+  response.body_len = 0;
+
+  // Resolve storage, this will just be a GET request
+  // spclient/spclient.go
+
+  // Camino del Sol - length 222680 ms
+  request.url = "https://gew4-spclient.spotify.com:443/storage-resolve/files/audio/interactive/a9e1a3302086ea7210badcfbca5e2a2d9c411183";
+  request.body = NULL;
+  request.body_len = 0;
+
+  request.headers[0] = clienttoken;
+  char auth_bearer[600];
+  snprintf(auth_bearer, sizeof(auth_bearer), "Authorization: Bearer %s", session.accesstoken.value);
+  request.headers[1] = auth_bearer;
+  request.headers[2] = NULL;
+//  req.url = "https://gew4-spclient.spotify.com:443/storage-resolve/files/audio/interactive/f7d992e38343156db7fee181b3e4f01787432e20";
+
+  ret = http_request(&response, &request, NULL);
+  if (ret < 0)
+    goto error;
+
+  printf("Result of request is %d\n", response.code);
+  if (response.code != 200)
+    goto error;
+
+  // TODO save all urls to a file object
+  char *cdnurl;
+  ret = response_read_storageresolve(&cdnurl, response.body, response.body_len);
+  if (ret < 0)
+    goto error;
+
+  free(response.body);
+  response.body_len = 0;
+
+  // TODO Get metadata from spclient/metadata/4/track/ or spclient/metadata/4/episode/ for filelength or use HEAD for Content-Length?
+
+  // player/player.go
+  request.url = cdnurl;
+  request.headers[0] = "Range: bytes=0-524288";
+  request.headers[1] = NULL;
+
+  ret = http_request(&response, &request, NULL);
+  if (ret < 0)
+    goto error;
+
+  printf("Result of request is %d\n", response.code);
+  if (response.code != 206) // Chunked
+    goto error;
+
+  printf("Length is %zu, content-length is %zd\n", response.body_len, response.content_length);
+
+  sp_cb.hexdump("Encrypted file chunk\n", response.body, 512);
+
+  free(cdnurl);
+
+  free(response.body);
+  response.body_len = 0;
 
  error:
   return ret;
-// Do login5
-
-// Get challenge
-// Find host name
-// 
 }

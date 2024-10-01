@@ -60,10 +60,9 @@ struct sp_callbacks
   void (*logmsg)(const char *fmt, ...);
 };
 
-
-
+// Deprecated, use login_token and login_stored_cred instead
 struct sp_session *
-librespotc_login_password(const char *username, const char *password);
+librespotc_login_password(const char *username, const char *password) __attribute__ ((deprecated));
 
 struct sp_session *
 librespotc_login_stored_cred(const char *username, uint8_t *stored_cred, size_t stored_cred_len);

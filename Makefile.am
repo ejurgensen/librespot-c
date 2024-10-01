@@ -21,13 +21,15 @@ HTTP_PROTO_SRC = \
 	src/proto/login5_client_info.pb-c.h src/proto/login5_client_info.pb-c.c \
 	src/proto/login5_challenges_hashcash.pb-c.h src/proto/login5_challenges_hashcash.pb-c.c \
 	src/proto/login5_challenges_code.pb-c.h src/proto/login5_challenges_code.pb-c.c \
-	src/proto/google_duration.pb-c.h src/proto/google_duration.pb-c.c
+	src/proto/google_duration.pb-c.h src/proto/google_duration.pb-c.c \
+	src/proto/storage_resolve.pb-c.h src/proto/storage_resolve.pb-c.c
 
 CORE_SRC = \
-	src/librespot-c.c src/connection.c src/channel.c src/crypto.c src/commands.c
+	src/librespot-c.c src/connection.c src/channel.c src/crypto.c src/commands.c \
+	src/apresolve.c
 
 HTTP_SRC = \
-        src/dl.c
+        src/dl.c src/http.c
 
 librespot_c_a_SOURCES =  \
 	$(CORE_SRC)      \
@@ -38,6 +40,6 @@ librespot_c_a_SOURCES =  \
 
 noinst_HEADERS =	 \
 	librespot-c.h src/librespot-c-internal.h src/connection.h \
-	src/channel.h src/crypto.h src/commands.h
+	src/channel.h src/crypto.h src/commands.h src/apresolve.h src/http.h
 
 EXTRA_DIST = README.md LICENSE
