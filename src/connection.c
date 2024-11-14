@@ -298,7 +298,7 @@ connection_idle_cb(int fd, short what, void *arg)
 }
 
 static int
-connection_make(struct sp_connection *conn, const char *ap_avoid, struct sp_conn_callbacks *cb, void *response_cb_arg)
+connection_make(struct sp_connection *conn, const char *ap_avoid, struct sp_conn_callbacks *cb, void *cb_arg)
 {
   int response_fd;
   int ret;
@@ -320,8 +320,8 @@ connection_make(struct sp_connection *conn, const char *ap_avoid, struct sp_conn
 #endif
 
   conn->response_fd = response_fd;
-  conn->response_ev = event_new(cb->evbase, response_fd, EV_READ | EV_PERSIST, cb->response_cb, response_cb_arg);
-  conn->timeout_ev = evtimer_new(cb->evbase, cb->timeout_cb, conn);
+  conn->response_ev = event_new(cb->evbase, response_fd, EV_READ | EV_PERSIST, cb->response_cb, cb_arg);
+  conn->timeout_ev = evtimer_new(cb->evbase, cb->timeout_cb, cb_arg);
 
   conn->idle_ev = evtimer_new(cb->evbase, connection_idle_cb, conn);
 
