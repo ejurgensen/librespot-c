@@ -63,6 +63,8 @@ channel_get(uint32_t channel_id, struct sp_session *session)
 void
 channel_free(struct sp_channel *channel)
 {
+  int i;
+
   if (!channel || channel->state == SP_CHANNEL_STATE_UNALLOCATED)
     return;
 
@@ -81,6 +83,9 @@ channel_free(struct sp_channel *channel)
   crypto_aes_free(&channel->file.decrypt);
 
   free(channel->file.path);
+
+  for (i = 0; i < ARRAY_SIZE(channel->file.cdnurl); i++)
+    free(channel->file.cdnurl[i]);
 
   memset(channel, 0, sizeof(struct sp_channel));
 

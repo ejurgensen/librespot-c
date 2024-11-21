@@ -4,9 +4,16 @@
 #include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 #include <ctype.h> // for isprint()
 
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+
 #include "librespot-c.h"
+
+static int audio_fd = -1;
 
 static void
 hexdump(const char *msg, uint8_t *mem, size_t len)
@@ -54,13 +61,73 @@ logmsg(const char *fmt, ...)
   va_end(ap);
 }
 
+static int
+tcp_connect(const char *address, unsigned short port)
+{
+  struct addrinfo hints = { 0 };
+  struct addrinfo *servinfo;
+  struct addrinfo *ptr;
+  char strport[8];
+  int fd;
+  int ret;
+
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_family = AF_UNSPEC;
+
+  snprintf(strport, sizeof(strport), "%hu", port);
+  ret = getaddrinfo(address, strport, &hints, &servinfo);
+  if (ret < 0)
+    {
+      printf("Could not connect to %s (port %u): %s\n", address, port, gai_strerror(ret));
+      return -1;
+    }
+
+  for (ptr = servinfo; ptr; ptr = ptr->ai_next)
+    {
+      fd = socket(ptr->ai_family, SOCK_STREAM, ptr->ai_protocol);
+      if (fd < 0)
+	{
+	  continue;
+	}
+
+      ret = connect(fd, ptr->ai_addr, ptr->ai_addrlen);
+      if (ret < 0)
+	{
+	  close(fd);
+	  continue;
+	}
+
+      break;
+    }
+
+  freeaddrinfo(servinfo);
+
+  if (!ptr)
+    {
+      printf("Could not connect to '%s' (port %u): %s\n", address, port, strerror(errno));
+      return -1;
+    }
+
+  printf("Connected to %s (port %u)\n", address, port);
+
+  return fd;
+}
+
+static void
+tcp_disconnect(int fd)
+{
+  if (fd < 0)
+    return;
+
+  close(fd);
+}
+
+
 struct sp_callbacks callbacks =
 {
-/*
-  .https_get = https_get,
   .tcp_connect = tcp_connect,
   .tcp_disconnect = tcp_disconnect,
-*/
+
   .thread_name_set = NULL,
 
   .hexdump  = hexdump,
@@ -70,7 +137,7 @@ struct sp_callbacks callbacks =
 int
 main(int argc, char * argv[])
 {
-//  struct sp_session *session = NULL;
+  struct sp_session *session = NULL;
   struct sp_sysinfo sysinfo = { 0 };
 //  struct sp_credentials credentials;
 //  struct sp_metadata metadata;
@@ -112,12 +179,36 @@ main(int argc, char * argv[])
       goto error;
     }
 
-  ret = librespot_http_test(argv[2], stored_cred, stored_cred_len);
+  session = librespotc_login_stored_cred(argv[2], stored_cred, stored_cred_len);
+  if (!session)
+    {
+      printf("Error logging in with stored credentials: %s\n", librespotc_last_errmsg());
+      goto error;
+    }
 
-  printf("%d\n", ret);
+  printf("\n--- Login with stored credentials OK ---\n\n");
+
+//  ret = librespot_http_test(argv[2], stored_cred, stored_cred_len);
+
+//  printf("%d\n", ret);
+
+/*
+  audio_fd = librespotc_open(argv[1], session);
+  if (audio_fd < 0)
+    {
+      printf("Error opening file: %s\n", librespotc_last_errmsg());
+      goto error;
+    }
+*/
 
  error:
-  fclose(f_stored_cred);
+  if (audio_fd >= 0)
+    librespotc_close(audio_fd);
+  if (session)
+    librespotc_logout(session);
+  if (f_stored_cred)
+    fclose(f_stored_cred);
+
   librespotc_deinit();
   return ret;
 }

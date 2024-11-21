@@ -16,15 +16,13 @@ struct http_request
   bool headers_only; // HEAD request
   bool ssl_verify_peer;
 
-  const char *headers[HTTP_MAX_HEADERS];
+  char *headers[HTTP_MAX_HEADERS];
   uint8_t *body; // If not NULL and body_len > 0 -> POST request
   size_t body_len;
 };
 
 struct http_response
 {
-  struct http_request *request;
-
   int code;
   ssize_t content_length; // -1 = unknown
 
@@ -39,12 +37,17 @@ http_session_init(struct http_session *session);
 void
 http_session_deinit(struct http_session *session);
 
-// A sync request. The session is optional but increases performance when
-// making many requests.
-int
-http_request(struct http_response *res, struct http_request *req, struct http_session *session);
+void
+http_request_free(struct http_request *req, bool only_content);
 
-// Wraps around http_request() for a simple GET request
+void
+http_response_free(struct http_response *res, bool only_content);
+
+// The session is optional but increases performance when making many requests.
+int
+http_request(struct http_response *response, struct http_request *request, struct http_session *session);
+
+// Wraps around http_request() for a simple sync GET request
 int
 http_get(char **body, const char *url);
 

@@ -54,7 +54,6 @@ events for proceeding are activated directly.
 #include "commands.h"
 #include "connection.h"
 #include "channel.h"
-#include "apresolve.h"
 
 // #define DEBUG_DISCONNECT 1
 
@@ -78,10 +77,6 @@ static struct timeval sp_response_timeout_tv = { SP_AP_TIMEOUT_SECS, 0 };
 #ifdef DEBUG_DISCONNECT
 static int debug_disconnect_counter;
 #endif
-
-// Forwards
-static int
-request_make(enum sp_msg_type type, struct sp_session *session);
 
 
 /* -------------------------------- Session --------------------------------- */
@@ -227,7 +222,7 @@ session_return(struct sp_session *session, enum sp_error err)
 static void
 session_error(struct sp_session *session, enum sp_error err)
 {
-  sp_cb.logmsg("Session error: %d (occurred before msg %d, queue %d)\n", err, session->msg_type_next, session->msg_type_queued);
+  sp_cb.logmsg("Session error %d: %s\n", err, sp_errmsg);
 
   session_return(session, err);
 
@@ -245,14 +240,15 @@ session_error(struct sp_session *session, enum sp_error err)
 
 // Called if an access point disconnects. Will clear current connection and
 // start a flow where the same request will be made to another access point.
+/*
 static void
 session_retry(struct sp_session *session)
 {
+// TODO fixme
   struct sp_channel *channel = session->now_streaming_channel;
-  enum sp_msg_type type = session->msg_type_last;
   int ret;
 
-  sp_cb.logmsg("Retrying after disconnect (occurred at msg %d)\n", type);
+  sp_cb.logmsg("Retrying after disconnect\n");
 
   channel_retry(channel);
 
@@ -261,52 +257,14 @@ session_retry(struct sp_session *session)
   ap_disconnect(&session->conn);
 
   // If we were in the middle of a handshake when disconnected we must restart
-  if (msg_is_handshake(type))
-    type = MSG_TYPE_CLIENT_HELLO;
+  // if (msg_is_handshake(type))
+  //  type = MSG_TYPE_CLIENT_HELLO;
 
-  ret = request_make(type, session);
-  if (ret < 0)
-    session_error(session, ret);
+  sequence_continue(session);
 }
+*/
 
 /* ------------------------ Main sequence control --------------------------- */
-
-// This callback must determine if a new request should be made, or if we are
-// done and should return to caller
-static void
-continue_cb(int fd, short what, void *arg)
-{
-  struct sp_session *session = arg;
-  enum sp_msg_type type = MSG_TYPE_NONE;
-  int ret;
-
-  // type_next has priority, since this is what we use to chain a sequence, e.g.
-  // the handshake sequence. type_queued is what comes after, e.g. first a
-  // handshake (type_next) and then a chunk request (type_queued)
-  if (session->msg_type_next != MSG_TYPE_NONE)
-    {
-//      sp_cb.logmsg(">>> msg_next >>>\n");
-
-      type = session->msg_type_next;
-      session->msg_type_next = MSG_TYPE_NONE;
-    }
-  else if (session->msg_type_queued != MSG_TYPE_NONE)
-    {
-//      sp_cb.logmsg(">>> msg_queued >>>\n");
-
-      type = session->msg_type_queued;
-      session->msg_type_queued = MSG_TYPE_NONE;
-    }
-
-  if (type != MSG_TYPE_NONE)
-    {
-      ret = request_make(type, session);
-      if (ret < 0)
-	session_error(session, ret);
-    }
-  else
-    session_return(session, SP_OK_DONE); // All done, yay!
-}
 
 // This callback is triggered by response_cb when the message response handler
 // said that there was data to write. If not all data can be written in one pass
@@ -341,7 +299,7 @@ audio_write_cb(int fd, short what, void *arg)
 }
 
 static void
-timeout_cb(int fd, short what, void *arg)
+timeout_tcp_cb(int fd, short what, void *arg)
 {
   struct sp_session *session = arg;
 
@@ -351,11 +309,15 @@ timeout_cb(int fd, short what, void *arg)
 }
 
 static void
-response_cb(int fd, short what, void *arg)
+incoming_tcp_cb(int fd, short what, void *arg)
 {
   struct sp_session *session = arg;
   struct sp_connection *conn = &session->conn;
   struct sp_channel *channel = session->now_streaming_channel;
+  struct sp_message msg = { .type = SP_MSG_TYPE_TCP };
+  struct sp_tcp_message *tmsg = &msg.payload.tmsg;
+  uint8_t *in;
+  size_t in_len;
   int ret;
 
   if (what == EV_READ)
@@ -374,18 +336,29 @@ response_cb(int fd, short what, void *arg)
 	RETURN_ERROR(SP_ERR_NOCONNECTION, "The access point disconnected");
       else if (ret < 0)
 	RETURN_ERROR(SP_ERR_NOCONNECTION, "Connection to Spotify returned an error");
-
-//      sp_cb.logmsg("Received data len %d\n", ret);
     }
 
-  ret = response_read(session);
+  in_len = evbuffer_get_length(conn->incoming);
+  in = evbuffer_pullup(conn->incoming, -1);
+
+  // Allocates *data
+  ret = msg_tcp_read_one(&tmsg->data, &tmsg->len, in, in_len, conn);
+  if (ret != SP_OK_DONE)
+    goto error;
+
+  if (tmsg->len < 128)
+    sp_cb.hexdump("Received tcp message\n", tmsg->data, tmsg->len);
+  else
+    sp_cb.hexdump("Received tcp message (truncated)\n", tmsg->data, 128);
+
+  ret = msg_handle(&msg, session);
   switch (ret)
     {
       case SP_OK_WAIT: // Incomplete, wait for more data
 	break;
       case SP_OK_DATA:
         if (channel->state == SP_CHANNEL_STATE_PLAYING && !channel->file.end_of_file)
-	  session->msg_type_next = MSG_TYPE_CHUNK_REQUEST;
+	  session->next_seq = SP_SEQ_MEDIA_GET;
 	if (channel->progress_cb)
 	  channel->progress_cb(channel->audio_fd[0], channel->cb_arg, 4 * channel->file.received_words - SP_OGG_HEADER_LEN, 4 * channel->file.len_words - SP_OGG_HEADER_LEN);
 
@@ -408,79 +381,148 @@ response_cb(int fd, short what, void *arg)
 	goto error;
     }
 
+  msg_clear(&msg);
   return;
 
  error:
-  if (ret == SP_ERR_NOCONNECTION)
-    session_retry(session);
-  else
+  msg_clear(&msg);
+
+// TODO don't do this here, always let session_continue_cb do it
+//  if (ret == SP_ERR_NOCONNECTION)
+//    session_retry(session);
+//  else
     session_error(session, ret);
 }
 
-static int
-relogin(enum sp_msg_type type, struct sp_session *session)
+static enum sp_error
+msg_send(struct sp_message *msg, struct sp_session *session)
 {
-  int ret;
+  struct sp_message res;
+  struct sp_connection *conn = &session->conn;
+  enum sp_error ret;
 
-  ret = request_make(MSG_TYPE_CLIENT_HELLO, session);
-  if (ret < 0)
-    RETURN_ERROR(ret, sp_errmsg);
+  if (session->request->proto == SP_PROTO_TCP)
+    {
+      if (msg->payload.tmsg.encrypt)
+        conn->is_encrypted = true;
 
-  // In case we lost connection to the AP we have to make a new handshake for
-  // the non-handshake message types. So queue the message until the handshake
-  // is complete.
-  session->msg_type_queued = type;
-  return 0;
+      ret = msg_send_tcp(&msg->payload.tmsg, conn);
+      if (ret < 0)
+        RETURN_ERROR(ret, sp_errmsg);
+
+      // Only start timeout timer if a response is expected, otherwise go
+      // straight to next message
+      if (session->request->response_handler)
+        event_add(conn->timeout_ev, &sp_response_timeout_tv);
+      else
+        event_active(session->continue_ev, 0, 0);
+    }
+  else if (session->request->proto == SP_PROTO_HTTP)
+    {
+      res.type = SP_MSG_TYPE_HTTP_RES;
+
+      ret = msg_send_http(&res.payload.hres, &msg->payload.hreq);
+      if (ret < 0)
+        RETURN_ERROR(ret, sp_errmsg);
+
+      // Since http requests are currently sync we can handle the response right
+      // away. In an async future we would need to make an incoming event and
+      // have a callback func for msg_handle, like for tcp.
+      ret = msg_handle(&res, session);
+      msg_clear(&res);
+      if (ret < 0)
+        RETURN_ERROR(ret, sp_errmsg);
+
+      event_active(session->continue_ev, 0, 0);
+    }
+  else
+    RETURN_ERROR(SP_ERR_INVALID, "Bug! Request is missing protocol type");
+
+  return SP_OK_DONE;
 
  error:
   return ret;
 }
 
-static int
-request_make(enum sp_msg_type type, struct sp_session *session)
+static void
+sequence_continue(struct sp_session *session)
 {
-  struct sp_message msg;
-  struct sp_connection *conn = &session->conn;
-  struct sp_conn_callbacks cb = { sp_evbase, response_cb, timeout_cb };
+  struct sp_conn_callbacks cb = { sp_evbase, incoming_tcp_cb, timeout_tcp_cb };
+  struct sp_message msg = { 0 };
   int ret;
 
-//  sp_cb.logmsg("Making request %d\n", type);
+  assert(session->request);
+  assert(session->request->name);
 
-  // Make sure the connection is in a state suitable for sending this message
-  ret = ap_connect(conn, &session->accesspoint, type, &session->cooldown_ts, &cb, session);
-  if (ret == SP_OK_WAIT)
-    return relogin(type, session); // Can't proceed right now, the handshake needs to complete first
-  else if (ret < 0)
-    RETURN_ERROR(ret, sp_errmsg);
+  sp_cb.logmsg("Preparing request '%s'\n", session->request->name);
 
-  ret = msg_make(&msg, type, session);
+  // Checks if the dependencies for making the request are met - e.g. do we have
+  // a connection and a valid token. If not, tries to satisfy them.
+  ret = seq_request_prepare(session->request, &cb, session);
   if (ret < 0)
+    RETURN_ERROR(ret, sp_errmsg);
+//TODO start a new sequence, e.g. GET_TOKEN?
+
+  ret = msg_make(&msg, session->request, session);
+  if (ret > 0)
+    {
+      event_active(session->continue_ev, 0, 0);
+      return;
+    }
+  else if (ret < 0)
     RETURN_ERROR(SP_ERR_INVALID, "Error constructing message to Spotify");
 
-  if (msg.encrypt)
-    conn->is_encrypted = true;
-
-  ret = msg_send(&msg, conn);
+  ret = msg_send(&msg, session);
   if (ret < 0)
     RETURN_ERROR(ret, sp_errmsg);
 
-  // Only start timeout timer if a response is expected, otherwise go straight
-  // to next message
-  if (msg.response_handler)
-    event_add(conn->timeout_ev, &sp_response_timeout_tv);
-  else
-    event_active(session->continue_ev, 0, 0);
-
-  session->msg_type_last = type;
-  session->msg_type_next = msg.type_next;
-  session->response_handler = msg.response_handler;
-
-  return 0;
+  msg_clear(&msg);
+  return; // Proceed in sequence_continue_cb
 
  error:
-  return ret;
+  msg_clear(&msg);
+
+  // Must be deferred, otherwise sequence_start() could invalidate the session,
+  // meaning any dereference of the session by the caller after sequence_start()
+  // would segfault.
+// TODO
+//  deferred_session_failure(ret, sp_errmsg, seq_ctx->session);
 }
 
+static void
+sequence_continue_cb(int fd, short what, void *arg)
+{
+  struct sp_session *session = arg;
+  int ret;
+
+      // Handler wanted to start a new sequence
+// TODO is this needed
+//      sequence_start(seq_type, seq_ctx->session, seq_ctx->log_caller);
+//      sequence_free(seq_ctx);
+
+  session->request++;
+
+  if (!session->request->name)
+    goto end;
+
+  sequence_continue(session);
+  return;
+
+ end:
+  if (ret < 0)
+    session_error(session, ret);
+  else
+    session_return(session, SP_OK_DONE); // All done, yay!
+}
+
+// All errors that may occur during a sequence are called back async
+static void
+sequence_start(enum sp_seq_type seq_type, struct sp_session *session)
+{
+  session->request = seq_request_get(seq_type, 0);
+
+  sequence_continue(session);
+}
 
 /* ----------------------------- Implementation ----------------------------- */
 
@@ -505,9 +547,7 @@ track_write(void *arg, int *retval)
 
   channel_play(channel);
 
-  ret = request_make(MSG_TYPE_CHUNK_REQUEST, session);
-  if (ret < 0)
-    RETURN_ERROR(ret, sp_errmsg);
+  sequence_start(SP_SEQ_MEDIA_GET, session);
 
   channel->progress_cb = cmdargs->progress_cb;
   channel->cb_arg = cmdargs->cb_arg;
@@ -515,7 +555,7 @@ track_write(void *arg, int *retval)
   return COMMAND_END;
 
  error:
-  sp_cb.logmsg("Error %d: %s", ret, sp_errmsg);
+  sp_cb.logmsg("Error %d: %s\n", ret, sp_errmsg);
 
   return COMMAND_END;
 }
@@ -546,7 +586,7 @@ track_pause(void *arg, int *retval)
     }
 
   channel_pause(channel);
-  session->msg_type_next = MSG_TYPE_NONE;
+  session->next_seq = SP_SEQ_ABORT; // TODO test if this will work
 
   *retval = 1;
   return COMMAND_PENDING;
@@ -578,9 +618,7 @@ track_seek(void *arg, int *retval)
   // AES decryptor to match the new position. It also flushes the pipe.
   channel_seek(channel, cmdargs->seek_pos);
 
-  ret = request_make(MSG_TYPE_CHUNK_REQUEST, session);
-  if (ret < 0)
-    RETURN_ERROR(ret, sp_errmsg);
+  sequence_start(SP_SEQ_MEDIA_SEEK, session);
 
   *retval = 1;
   return COMMAND_PENDING;
@@ -618,7 +656,6 @@ media_open(void *arg, int *retval)
   struct sp_cmdargs *cmdargs = arg;
   struct sp_session *session = cmdargs->session;
   struct sp_channel *channel = NULL;
-  enum sp_msg_type type;
   int ret;
 
   ret = session_check(session);
@@ -634,22 +671,18 @@ media_open(void *arg, int *retval)
 
   cmdargs->fd_read = channel->audio_fd[0];
 
-  // Must be set before calling request_make() because this info is needed for
+  // Must be set before calling sequence_start() because this info is needed for
   // making the request
   session->now_streaming_channel = channel;
 
-  if (channel->file.media_type == SP_MEDIA_TRACK)
-    type = MSG_TYPE_MERCURY_TRACK_GET;
-  else if (channel->file.media_type == SP_MEDIA_EPISODE)
-    type = MSG_TYPE_MERCURY_EPISODE_GET;
-  else
-    RETURN_ERROR(SP_ERR_INVALID, "Unknown media type in Spotify path");
-
   // Kicks of a sequence where we first get file info, then get the AES key and
   // then the first chunk (incl. headers)
-  ret = request_make(type, session);
-  if (ret < 0)
-    RETURN_ERROR(ret, sp_errmsg);
+  if (channel->file.media_type == SP_MEDIA_TRACK)
+    sequence_start(SP_SEQ_TRACK_OPEN, session);
+  else if (channel->file.media_type == SP_MEDIA_EPISODE)
+    sequence_start(SP_SEQ_EPISODE_OPEN, session);
+  else
+    RETURN_ERROR(SP_ERR_INVALID, "Unknown media type in Spotify path");
 
   *retval = 1;
   return COMMAND_PENDING;
@@ -683,17 +716,11 @@ login(void *arg, int *retval)
   struct sp_session *session = NULL;
   int ret;
 
-  ret = session_new(&session, cmdargs, continue_cb);
+  ret = session_new(&session, cmdargs, sequence_continue_cb);
   if (ret < 0)
     goto error;
 
-  ret = apresolve_server_get(&session->accesspoint, &session->spclient, &session->dealer);
-  if (ret < 0)
-    goto error;
-
-  ret = request_make(MSG_TYPE_CLIENT_HELLO, session);
-  if (ret < 0)
-    goto error;
+  sequence_start(SP_SEQ_LOGIN, session);
 
   cmdargs->session = session;
 
@@ -970,6 +997,10 @@ librespotc_init(struct sp_sysinfo *sysinfo, struct sp_callbacks *callbacks)
 
   if (sp_initialized)
     RETURN_ERROR(SP_ERR_INVALID, "librespot-c already initialized");
+
+  ret = seq_requests_check();
+  if (ret < 0)
+    RETURN_ERROR(SP_ERR_INVALID, "Bug! Misalignment between enum seq_type and seq_requests");
 
   sp_cb     = *callbacks;
   sp_initialized = true;

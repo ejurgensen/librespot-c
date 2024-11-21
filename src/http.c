@@ -32,6 +32,44 @@ http_session_deinit(struct http_session *session)
   curl_easy_cleanup(session->curl);
 }
 
+void
+http_request_free(struct http_request *req, bool only_content)
+{
+  int i;
+
+  if (!req)
+    return;
+
+  free(req->body);
+
+  for (i = 0; req->headers[i]; i++)
+    free(req->headers[i]);
+
+  if (only_content)
+    memset(req, 0, sizeof(struct http_request));
+  else
+    free(req);
+}
+
+void
+http_response_free(struct http_response *res, bool only_content)
+{
+  int i;
+
+  if (!res)
+    return;
+
+  free(res->body);
+
+  for (i = 0; res->headers[i]; i++)
+    free(res->headers[i]);
+
+  if (only_content)
+    memset(res, 0, sizeof(struct http_response));
+  else
+    free(res);
+}
+
 static size_t
 header_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
@@ -111,7 +149,6 @@ http_request(struct http_response *response, struct http_request *request, struc
     RETURN_ERROR(SP_ERR_OOM, "Error allocating CURL handle");
 
   memset(response, 0, sizeof(struct http_response));
-  response->request = request;
 
   curl_easy_setopt(curl, CURLOPT_URL, request->url);
 
@@ -136,9 +173,12 @@ http_request(struct http_response *response, struct http_request *request, struc
     }
 
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, HTTP_CLIENT_TIMEOUT);
+
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, body_cb);
-  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
+
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA, response);
 
   // Allow redirects
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);

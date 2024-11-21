@@ -27,13 +27,19 @@
 #define be64toh(x) OSSwapBigToHostInt64(x)
 #endif
 
+#define ARRAY_SIZE(x) ((unsigned int)(sizeof(x) / sizeof((x)[0])))
+
 #include "librespot-c.h"
 #include "crypto.h"
+#include "http.h"
 
 #include "proto/keyexchange.pb-c.h"
 #include "proto/authentication.pb-c.h"
 #include "proto/mercury.pb-c.h"
 #include "proto/metadata.pb-c.h"
+#include "proto/clienttoken.pb-c.h"
+#include "proto/login5.pb-c.h"
+#include "proto/storage_resolve.pb-c.h"
 
 // Disconnect from AP after this number of secs idle
 #define SP_AP_DISCONNECT_SECS 60
@@ -74,6 +80,9 @@
 #define SP_CLIENT_VERSION_DEFAULT "000000"
 #define SP_CLIENT_BUILD_ID_DEFAULT "aabbccdd"
 
+// ClientIdHex from client_id.go
+#define SP_CLIENT_ID_HEX "65b708073fc0480ea92a077233ca87bd"
+
 // Shorthand for error handling
 #define RETURN_ERROR(r, m) \
   do { ret = (r); sp_errmsg = (m); goto error; } while(0)
@@ -95,17 +104,48 @@ enum sp_error
   SP_ERR_TIMEOUT      = -9,
 };
 
+/*
+#define MSG_TYPE_F_HTTP (1 << 15)
+
 enum sp_msg_type
 {
-  MSG_TYPE_NONE,
-  MSG_TYPE_CLIENT_HELLO,
-  MSG_TYPE_CLIENT_RESPONSE_PLAINTEXT,
-  MSG_TYPE_CLIENT_RESPONSE_ENCRYPTED,
-  MSG_TYPE_PONG,
-  MSG_TYPE_MERCURY_TRACK_GET,
-  MSG_TYPE_MERCURY_EPISODE_GET,
-  MSG_TYPE_AUDIO_KEY_GET,
-  MSG_TYPE_CHUNK_REQUEST,
+  MSG_TYPE_NONE                      = 0,
+  MSG_TYPE_CLIENT_HELLO              = 1,
+  MSG_TYPE_CLIENT_RESPONSE_PLAINTEXT = 2,
+  MSG_TYPE_CLIENT_RESPONSE_ENCRYPTED = 3,
+  MSG_TYPE_PONG                      = 4,
+  MSG_TYPE_MERCURY_TRACK_GET         = 5,
+  MSG_TYPE_MERCURY_EPISODE_GET       = 6,
+  MSG_TYPE_AUDIO_KEY_GET             = 7,
+  MSG_TYPE_CHUNK_REQUEST             = 8,
+  MSG_TYPE_HTTP_CLIENTTOKEN          = 1 | MSG_TYPE_F_HTTP,
+  MSG_TYPE_HTTP_LOGIN5               = 2 | MSG_TYPE_F_HTTP,
+  MSG_TYPE_HTTP_RESOLVESTORAGE       = 3 | MSG_TYPE_F_HTTP,
+};
+*/
+
+enum sp_msg_type
+{
+  SP_MSG_TYPE_HTTP_REQ,
+  SP_MSG_TYPE_HTTP_RES,
+  SP_MSG_TYPE_TCP,
+};
+
+enum sp_seq_type
+{
+  SP_SEQ_ABORT = -1,
+  SP_SEQ_LOGIN,
+  SP_SEQ_TRACK_OPEN,
+  SP_SEQ_EPISODE_OPEN,
+  SP_SEQ_MEDIA_GET,
+  SP_SEQ_MEDIA_SEEK,
+  SP_SEQ_PONG,
+};
+
+enum sp_proto
+{
+  SP_PROTO_TCP,
+  SP_PROTO_HTTP,
 };
 
 enum sp_media_type
@@ -187,21 +227,27 @@ struct sp_conn_callbacks
   event_callback_fn timeout_cb;
 };
 
-struct sp_message
+struct sp_tcp_message
 {
-  enum sp_msg_type type;
   enum sp_cmd_type cmd;
 
   bool encrypt;
   bool add_version_header;
 
-  enum sp_msg_type type_next;
-  enum sp_msg_type type_queued;
-
-  int (*response_handler)(uint8_t *msg, size_t msg_len, struct sp_session *session);
-
   ssize_t len;
-  uint8_t data[4096];
+  uint8_t *data;
+};
+
+struct sp_message
+{
+  enum sp_msg_type type;
+
+  union payload
+    {
+      struct sp_tcp_message tmsg;
+      struct http_request hreq;
+      struct http_response hres;
+    } payload;
 };
 
 struct sp_server
@@ -241,6 +287,13 @@ struct sp_connection
   struct crypto_cipher decrypt;
 };
 
+struct sp_token
+{
+  char value[512]; // base64 string, actual size 360 bytes
+  int32_t expires_after_seconds;
+  int32_t refresh_after_seconds;
+};
+
 struct sp_mercury
 {
   char *uri;
@@ -266,6 +319,10 @@ struct sp_file
   char *path; // The Spotify URI, e.g. spotify:episode:3KRjRyqv5ou5SilNMYBR4E
   uint8_t media_id[16]; // Decoded value of the URIs base62
   enum sp_media_type media_type; // track or episode from URI
+
+  // For files that are served via http/"new protocol" (we may receive multiple
+  // urls).
+  char *cdnurl[4];
 
   uint8_t key[16];
 
@@ -337,6 +394,10 @@ struct sp_session
   struct sp_connection conn;
   time_t cooldown_ts;
 
+  bool use_http_proto;
+  struct sp_token http_clienttoken;
+  struct sp_token http_accesstoken;
+
   bool is_logged_in;
   struct sp_credentials credentials;
   char country[3]; // Incl null term
@@ -349,16 +410,26 @@ struct sp_session
   // the current track is also available
   struct sp_channel *now_streaming_channel;
 
+  // Current request in the sequence
+  struct sp_seq_request *request;
+
   // Go to next step in a request sequence
   struct event *continue_ev;
 
-  // Current, next and subsequent message being processed
-  enum sp_msg_type msg_type_last;
-  enum sp_msg_type msg_type_next;
-  enum sp_msg_type msg_type_queued;
-  int (*response_handler)(uint8_t *, size_t, struct sp_session *);
+  // Which sequence comes next
+  enum sp_seq_type next_seq;
 
   struct sp_session *next;
+};
+
+struct sp_seq_request
+{
+  enum sp_seq_type seq_type;
+  const char *name; // Name of request (for logging)
+  enum sp_proto proto;
+  int (*payload_make)(struct sp_message *, struct sp_session *);
+  enum sp_error (*request_prepare)(struct sp_seq_request *, struct sp_conn_callbacks *, struct sp_session *);
+  enum sp_error (*response_handler)(struct sp_message *, struct sp_session *);
 };
 
 struct sp_err_map
@@ -366,6 +437,7 @@ struct sp_err_map
   int errorcode;
   const char *errmsg;
 };
+
 
 extern struct sp_callbacks sp_cb;
 extern struct sp_sysinfo sp_sysinfo;

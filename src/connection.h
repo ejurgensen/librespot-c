@@ -2,19 +2,34 @@ void
 ap_disconnect(struct sp_connection *conn);
 
 enum sp_error
-ap_connect(struct sp_connection *conn, struct sp_server *server, enum sp_msg_type type, time_t *cooldown_ts, struct sp_conn_callbacks *cb, void *cb_arg);
+ap_connect(struct sp_connection *conn, struct sp_server *server, time_t *cooldown_ts, struct sp_conn_callbacks *cb, void *cb_arg);
+
+int
+seq_requests_check(void);
+
+struct sp_seq_request *
+seq_request_get(enum sp_seq_type seq_type, int n);
 
 enum sp_error
-response_read(struct sp_session *session);
+seq_request_prepare(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct sp_session *session);
 
-bool
-msg_is_handshake(enum sp_msg_type type);
+enum sp_error
+msg_tcp_read_one(uint8_t **out, size_t *out_len, uint8_t *in, size_t in_len, struct sp_connection *conn);
+
+enum sp_error
+msg_handle(struct sp_message *msg, struct sp_session *session);
+
+void
+msg_clear(struct sp_message *msg);
 
 int
-msg_make(struct sp_message *msg, enum sp_msg_type type, struct sp_session *session);
+msg_make(struct sp_message *msg, struct sp_seq_request *req, struct sp_session *session);
 
-int
-msg_send(struct sp_message *msg, struct sp_connection *conn);
+enum sp_error
+msg_send_tcp(struct sp_tcp_message *tmsg, struct sp_connection *conn);
+
+enum sp_error
+msg_send_http(struct http_response *hres, struct http_request *hreq);
 
 int
 msg_pong(struct sp_session *session);

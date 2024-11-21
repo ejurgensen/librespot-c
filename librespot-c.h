@@ -47,8 +47,7 @@ struct sp_sysinfo
 
 struct sp_callbacks
 {
-  // Bring your own https client and tcp connector
-  int (*https_get)(char **body, const char *url);
+  // Bring your own tcp connector
   int (*tcp_connect)(const char *address, unsigned short port);
   void (*tcp_disconnect)(int fd);
 
