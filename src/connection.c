@@ -935,7 +935,7 @@ handle_login5(struct sp_message *msg, struct sp_session *session)
   return ret;
 }
 
-static int
+static enum sp_error
 handle_storage_resolve(struct sp_message *msg, struct sp_session *session)
 {
   struct http_response *hres = &msg->payload.hres;
@@ -966,6 +966,14 @@ handle_storage_resolve(struct sp_message *msg, struct sp_session *session)
  error:
   spotify__download__proto__storage_resolve_response__free_unpacked(response, NULL);
   return ret;
+}
+
+static enum sp_error
+handle_media_get(struct sp_message *msg, struct sp_session *session)
+{
+  sp_cb.logmsg("Received %zu bytes\n", msg->payload.hres.body_len);
+
+  return SP_OK_DONE;
 }
 
 static enum sp_error
@@ -1665,6 +1673,17 @@ msg_make_storage_resolve_track(struct sp_message *msg, struct sp_session *sessio
   return 0;
 }
 
+static int
+msg_make_media_get(struct sp_message *msg, struct sp_session *session)
+{
+  struct http_request *hreq = &msg->payload.hreq;
+  struct sp_channel *channel = session->now_streaming_channel;
+
+  hreq->url = strdup(channel->file.cdnurl[0]);
+
+  return 0;
+}
+
 /*
 bool
 msg_is_handshake(enum sp_msg_type type)
@@ -1678,10 +1697,6 @@ msg_is_handshake(enum sp_msg_type type)
 // Must be large enough to also include null terminating elements
 static struct sp_seq_request seq_requests[][7] =
 {
-/*
-  {
-    { SP_SEQ_CONNECT, "AP_RESOLVE", SP_PROTO_HTTP, msg_make_ap_resolve, response_ap_resolve, },
-  },*/
   {
     { SP_SEQ_LOGIN, "AP_RESOLVE", SP_PROTO_HTTP, msg_make_ap_resolve, NULL, handle_ap_resolve, },
     { SP_SEQ_LOGIN, "CLIENT_HELLO", SP_PROTO_TCP, msg_make_client_hello, prepare_tcp, handle_client_hello, },
@@ -1700,7 +1715,10 @@ static struct sp_seq_request seq_requests[][7] =
     { SP_SEQ_EPISODE_OPEN, "AUDIO_KEY_GET", SP_PROTO_TCP, msg_make_audio_key_get, prepare_tcp, handle_tcp_generic, },
   },
   {
-    { SP_SEQ_MEDIA_GET, "CHUNK_REQUEST", SP_PROTO_TCP, msg_make_chunk_request, prepare_tcp, handle_tcp_generic, },
+    { SP_SEQ_MEDIA_GET_TCP, "CHUNK_REQUEST", SP_PROTO_TCP, msg_make_chunk_request, prepare_tcp, handle_tcp_generic, },
+  },
+  {
+    { SP_SEQ_MEDIA_GET, "MEDIA_GET", SP_PROTO_HTTP, msg_make_media_get, NULL, handle_media_get, },
   },
   {
 // TODO

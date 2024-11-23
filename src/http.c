@@ -9,7 +9,6 @@
 #include <event2/event.h>
 #include <curl/curl.h>
 
-#include "librespot-c-internal.h"
 #include "http.h"
 
 // Number of seconds the client will wait for a response before aborting
@@ -101,6 +100,7 @@ body_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
   struct http_response *response = userdata;
   size_t realsize = size * nmemb;
+  size_t new_size;
   uint8_t *new;
 
   if (realsize == 0)
@@ -108,7 +108,9 @@ body_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
       return 0;
     }
 
-  new = realloc(response->body, response->body_len + realsize + 1);
+  // Make sure the size is +1 larger than needed so we can zero terminate for safety
+  new_size = response->body_len + realsize + 1;
+  new = realloc(response->body, new_size);
   if (!new)
     {
       free(response->body);
@@ -122,7 +124,7 @@ body_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
 
   memset(new + response->body_len, 0, 1); // Zero terminate in case we need to address as C string
   response->body = new;
-  return response->body_len;
+  return nmemb;
 }
 
 int
@@ -135,7 +137,6 @@ http_request(struct http_response *response, struct http_request *request, struc
   long opt;
   curl_off_t content_length;
   int i;
-  int ret;
 
   if (session)
     {
@@ -147,7 +148,7 @@ http_request(struct http_response *response, struct http_request *request, struc
       curl = curl_easy_init();
     }
   if (!curl)
-    RETURN_ERROR(SP_ERR_OOM, "Error allocating CURL handle");
+    return -1;
 
   memset(response, 0, sizeof(struct http_response));
 
@@ -185,11 +186,9 @@ http_request(struct http_response *response, struct http_request *request, struc
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
   curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5);
 
-  // sp_cb.logmsg("Making request for %s\n", req->url);
-
   res = curl_easy_perform(curl);
   if (res != CURLE_OK)
-    RETURN_ERROR(SP_ERR_NOCONNECTION, curl_easy_strerror(res));
+    goto error;
 
   res = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
   response->code = (res == CURLE_OK) ? (int) response_code : -1;
@@ -208,5 +207,5 @@ http_request(struct http_response *response, struct http_request *request, struc
   if (!session)
     curl_easy_cleanup(curl);
 
-  return ret;
+  return -1;
 }
