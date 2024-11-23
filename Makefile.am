@@ -25,8 +25,7 @@ HTTP_PROTO_SRC = \
 	src/proto/storage_resolve.pb-c.h src/proto/storage_resolve.pb-c.c
 
 CORE_SRC = \
-	src/librespot-c.c src/connection.c src/channel.c src/crypto.c src/commands.c \
-	src/apresolve.c
+	src/librespot-c.c src/connection.c src/channel.c src/crypto.c src/commands.c
 
 HTTP_SRC = \
         src/dl.c src/http.c
@@ -40,6 +39,6 @@ librespot_c_a_SOURCES =  \
 
 noinst_HEADERS =	 \
 	librespot-c.h src/librespot-c-internal.h src/connection.h \
-	src/channel.h src/crypto.h src/commands.h src/apresolve.h src/http.h
+	src/channel.h src/crypto.h src/commands.h src/http.h
 
 EXTRA_DIST = README.md LICENSE

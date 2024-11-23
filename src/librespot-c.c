@@ -315,9 +315,6 @@ incoming_tcp_cb(int fd, short what, void *arg)
   struct sp_connection *conn = &session->conn;
   struct sp_channel *channel = session->now_streaming_channel;
   struct sp_message msg = { .type = SP_MSG_TYPE_TCP };
-  struct sp_tcp_message *tmsg = &msg.payload.tmsg;
-  uint8_t *in;
-  size_t in_len;
   int ret;
 
   if (what == EV_READ)
@@ -327,7 +324,7 @@ incoming_tcp_cb(int fd, short what, void *arg)
       debug_disconnect_counter++;
       if (debug_disconnect_counter == 1000)
 	{
-	  sp_cb.logmsg("Simulating a disconnection from the access point (last request type was %d)\n", session->msg_type_last);
+	  sp_cb.logmsg("Simulating a disconnection from the access point (last request was %s)\n", session->request->name);
 	  ret = 0;
 	}
 #endif
@@ -338,18 +335,17 @@ incoming_tcp_cb(int fd, short what, void *arg)
 	RETURN_ERROR(SP_ERR_NOCONNECTION, "Connection to Spotify returned an error");
     }
 
-  in_len = evbuffer_get_length(conn->incoming);
-  in = evbuffer_pullup(conn->incoming, -1);
-
-  // Allocates *data
-  ret = msg_tcp_read_one(&tmsg->data, &tmsg->len, in, in_len, conn);
-  if (ret != SP_OK_DONE)
+  // Allocates *data in msg
+  ret = msg_tcp_read_one(&msg.payload.tmsg, conn);
+  if (ret == SP_OK_WAIT)
+    return;
+  else if (ret < 0)
     goto error;
 
-  if (tmsg->len < 128)
-    sp_cb.hexdump("Received tcp message\n", tmsg->data, tmsg->len);
+  if (msg.payload.tmsg.len < 128)
+    sp_cb.hexdump("Received tcp message\n", msg.payload.tmsg.data, msg.payload.tmsg.len);
   else
-    sp_cb.hexdump("Received tcp message (truncated)\n", tmsg->data, 128);
+    sp_cb.hexdump("Received tcp message (truncated)\n", msg.payload.tmsg.data, 128);
 
   ret = msg_handle(&msg, session);
   switch (ret)
@@ -406,7 +402,7 @@ msg_send(struct sp_message *msg, struct sp_session *session)
       if (msg->payload.tmsg.encrypt)
         conn->is_encrypted = true;
 
-      ret = msg_send_tcp(&msg->payload.tmsg, conn);
+      ret = msg_tcp_send(&msg->payload.tmsg, conn);
       if (ret < 0)
         RETURN_ERROR(ret, sp_errmsg);
 
@@ -421,7 +417,7 @@ msg_send(struct sp_message *msg, struct sp_session *session)
     {
       res.type = SP_MSG_TYPE_HTTP_RES;
 
-      ret = msg_send_http(&res.payload.hres, &msg->payload.hreq);
+      ret = msg_http_send(&res.payload.hres, &msg->payload.hreq);
       if (ret < 0)
         RETURN_ERROR(ret, sp_errmsg);
 
@@ -502,8 +498,12 @@ sequence_continue_cb(int fd, short what, void *arg)
 
   session->request++;
 
+  sp_cb.logmsg("Session req is %p\n", session->request);
+
   if (!session->request->name)
     goto end;
+
+  sp_cb.logmsg("Name of req is %s\n", session->request->name);
 
   sequence_continue(session);
   return;

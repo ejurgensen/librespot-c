@@ -14,7 +14,7 @@ enum sp_error
 seq_request_prepare(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct sp_session *session);
 
 enum sp_error
-msg_tcp_read_one(uint8_t **out, size_t *out_len, uint8_t *in, size_t in_len, struct sp_connection *conn);
+msg_tcp_read_one(struct sp_tcp_message *tmsg, struct sp_connection *conn);
 
 enum sp_error
 msg_handle(struct sp_message *msg, struct sp_session *session);
@@ -26,10 +26,10 @@ int
 msg_make(struct sp_message *msg, struct sp_seq_request *req, struct sp_session *session);
 
 enum sp_error
-msg_send_tcp(struct sp_tcp_message *tmsg, struct sp_connection *conn);
+msg_tcp_send(struct sp_tcp_message *tmsg, struct sp_connection *conn);
 
 enum sp_error
-msg_send_http(struct http_response *hres, struct http_request *hreq);
+msg_http_send(struct http_response *hres, struct http_request *hreq);
 
 int
 msg_pong(struct sp_session *session);

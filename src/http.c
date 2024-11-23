@@ -40,6 +40,7 @@ http_request_free(struct http_request *req, bool only_content)
   if (!req)
     return;
 
+  free(req->url);
   free(req->body);
 
   for (i = 0; req->headers[i]; i++)
@@ -207,29 +208,5 @@ http_request(struct http_response *response, struct http_request *request, struc
   if (!session)
     curl_easy_cleanup(curl);
 
-  return ret;
-}
-
-int
-http_get(char **body, const char *url)
-{
-  struct http_request request = { 0 };
-  struct http_response response = { 0 };
-  int ret;
-
-  request.url = url;
-
-  ret = http_request(&response, &request, NULL);
-  if (ret < 0)
-    goto error;
-
-  if (response.code != 200)
-    RETURN_ERROR(SP_ERR_INVALID, "Server didn't reply with HTTP OK to GET request");
-
-  *body = (char *)response.body;
-  return 0;
-
- error:
-  free(response.body);
   return ret;
 }

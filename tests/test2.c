@@ -188,18 +188,12 @@ main(int argc, char * argv[])
 
   printf("\n--- Login with stored credentials OK ---\n\n");
 
-//  ret = librespot_http_test(argv[2], stored_cred, stored_cred_len);
-
-//  printf("%d\n", ret);
-
-/*
   audio_fd = librespotc_open(argv[1], session);
   if (audio_fd < 0)
     {
       printf("Error opening file: %s\n", librespotc_last_errmsg());
       goto error;
     }
-*/
 
  error:
   if (audio_fd >= 0)

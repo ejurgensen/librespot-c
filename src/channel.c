@@ -491,4 +491,3 @@ channel_msg_read(uint16_t *channel_id, uint8_t *msg, size_t msg_len, struct sp_s
  error:
   return ret;
 }
-

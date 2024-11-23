@@ -107,6 +107,23 @@ debug_mock_response(struct sp_message *msg, struct sp_connection *conn)
 
 /* --------------------------------- Helpers -------------------------------- */
 
+static char *
+asprintf_or_die(const char *fmt, ...)
+{
+  char *ret = NULL;
+  va_list va;
+
+  va_start(va, fmt);
+  if (vasprintf(&ret, fmt, va) < 0)
+    {
+      sp_cb.logmsg("Out of memory for asprintf\n");
+      abort();
+    }
+  va_end(va);
+
+  return ret;
+}
+
 #ifdef HAVE_SYS_UTSNAME_H
 static void
 system_info_from_uname(SystemInfo *system_info)
@@ -535,6 +552,13 @@ prepare_tcp(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct
   return ret;
 }
 
+static enum sp_error
+prepare_http_auth(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct sp_session *session)
+{
+  // TODO check that the tokens aren't expired for login5 and storage-resolve
+  return SP_OK_DONE;
+}
+
 
 /* --------------------------- Incoming messages ---------------------------- */
 
@@ -912,7 +936,7 @@ handle_login5(struct sp_message *msg, struct sp_session *session)
 }
 
 static int
-handle_storageresolve(struct sp_message *msg, struct sp_session *session)
+handle_storage_resolve(struct sp_message *msg, struct sp_session *session)
 {
   struct http_response *hres = &msg->payload.hres;
   Spotify__Download__Proto__StorageResolveResponse *response;
@@ -922,13 +946,13 @@ handle_storageresolve(struct sp_message *msg, struct sp_session *session)
 
   response = spotify__download__proto__storage_resolve_response__unpack(NULL, hres->body_len, hres->body);
   if (!response)
-    RETURN_ERROR(SP_ERR_INVALID, "Could not parse storageresolve response");
+    RETURN_ERROR(SP_ERR_INVALID, "Could not parse storage-resolve response");
 
   switch (response->result)
     {
       case SPOTIFY__DOWNLOAD__PROTO__STORAGE_RESOLVE_RESPONSE__RESULT__CDN:
         for (i = 0; i < response->n_cdnurl && i < ARRAY_SIZE(channel->file.cdnurl); i++)
-          channel->file.cdnurl[i] = response->cdnurl[i];
+          channel->file.cdnurl[i] = strdup(response->cdnurl[i]);
         break;
       case SPOTIFY__DOWNLOAD__PROTO__STORAGE_RESOLVE_RESPONSE__RESULT__STORAGE:
         RETURN_ERROR(SP_ERR_INVALID, "Track not available via CDN storage");
@@ -1007,7 +1031,7 @@ msg_tcp_handle(struct sp_message *msg, struct sp_session *session)
       return request->response_handler(msg, session);
     }
 
-  sp_cb.logmsg("Handling incoming TCP message\n");
+  sp_cb.logmsg("Handling incoming tcp message\n");
   // Not waiting for anything, could be a ping
   return handle_tcp_generic(msg, session);
 }
@@ -1045,8 +1069,10 @@ msg_handle(struct sp_message *msg, struct sp_session *session)
 }
 
 enum sp_error
-msg_tcp_read_one(uint8_t **out, size_t *out_len, uint8_t *in, size_t in_len, struct sp_connection *conn)
+msg_tcp_read_one(struct sp_tcp_message *tmsg, struct sp_connection *conn)
 {
+  size_t in_len = evbuffer_get_length(conn->incoming);
+  uint8_t *in = evbuffer_pullup(conn->incoming, -1);
   uint32_t be32;
   ssize_t msg_len;
   int ret;
@@ -1060,9 +1086,9 @@ msg_tcp_read_one(uint8_t **out, size_t *out_len, uint8_t *in, size_t in_len, str
       if (msg_len > in_len)
 	return SP_OK_WAIT;
 
-      *out = malloc(msg_len);
-      *out_len = msg_len;
-      evbuffer_remove(conn->incoming, *out, msg_len);
+      tmsg->data = malloc(msg_len);
+      tmsg->len = msg_len;
+      evbuffer_remove(conn->incoming, tmsg->data, msg_len);
 
       return SP_OK_DONE;
     }
@@ -1093,9 +1119,9 @@ msg_tcp_read_one(uint8_t **out, size_t *out_len, uint8_t *in, size_t in_len, str
     }
 
   // At this point we have a complete, decrypted message.
-  *out = malloc(msg_len);
-  *out_len = msg_len;
-  evbuffer_remove(conn->incoming, *out, msg_len);
+  tmsg->data = malloc(msg_len);
+  tmsg->len = msg_len;
+  evbuffer_remove(conn->incoming, tmsg->data, msg_len);
 
   return SP_OK_DONE;
 
@@ -1111,7 +1137,7 @@ msg_make_ap_resolve(struct sp_message *msg, struct sp_session *session)
 {
   struct http_request *hreq = &msg->payload.hreq;
 
-  hreq->url = "https://apresolve.spotify.com/?type=accesspoint&type=spclient&type=dealer";
+  hreq->url = strdup("https://apresolve.spotify.com/?type=accesspoint&type=spclient&type=dealer");
   return 0;
 }
 
@@ -1567,7 +1593,7 @@ msg_make_clienttoken(struct sp_message *msg, struct sp_session *session)
 
   spotify__clienttoken__http__v0__client_token_request__pack(&treq, hreq->body);
 
-  hreq->url = "https://clienttoken.spotify.com/v1/clienttoken";
+  hreq->url = strdup("https://clienttoken.spotify.com/v1/clienttoken");
 
   hreq->headers[0] = strdup("Accept: application/x-protobuf");
   hreq->headers[1] = strdup("Content-Type: application/x-protobuf");
@@ -1583,7 +1609,6 @@ msg_make_login5(struct sp_message *msg, struct sp_session *session)
   Spotify__Login5__V3__LoginRequest req = SPOTIFY__LOGIN5__V3__LOGIN_REQUEST__INIT;
   Spotify__Login5__V3__ClientInfo client_info = SPOTIFY__LOGIN5__V3__CLIENT_INFO__INIT;
   Spotify__Login5__V3__Credentials__StoredCredential stored_credential = SPOTIFY__LOGIN5__V3__CREDENTIALS__STORED_CREDENTIAL__INIT;
-  char clienttoken_header[600];
 
   if (session->credentials.stored_cred_len == 0)
     return -1;
@@ -1605,15 +1630,38 @@ msg_make_login5(struct sp_message *msg, struct sp_session *session)
 
   spotify__login5__v3__login_request__pack(&req, hreq->body);
 
-  hreq->url = "https://login5.spotify.com/v3/login";
+  hreq->url = strdup("https://login5.spotify.com/v3/login");
 
-  hreq->headers[0] = strdup("Accept: application/x-protobuf");
-  hreq->headers[1] = strdup("Content-Type: application/x-protobuf");
+  hreq->headers[0] = asprintf_or_die("Accept: application/x-protobuf");
+  hreq->headers[1] = asprintf_or_die("Content-Type: application/x-protobuf");
+  hreq->headers[2] = asprintf_or_die("Client-Token: %s", session->http_clienttoken.value);
 
-  // TODO token expiration
-  snprintf(clienttoken_header, sizeof(clienttoken_header), "Client-Token: %s", session->http_clienttoken.value);
-  hreq->headers[2] = strdup(clienttoken_header);
+  return 0;
+}
 
+// Resolve storage, this will just be a GET request
+// Ref. spclient/spclient.go
+static int
+msg_make_storage_resolve_track(struct sp_message *msg, struct sp_session *session)
+{
+  struct http_request *hreq = &msg->payload.hreq;
+  struct sp_server *server = &session->spclient;
+  struct sp_channel *channel = session->now_streaming_channel;
+  char *track_id = NULL;
+  char *ptr;
+  int i;
+
+  track_id = malloc(2 * sizeof(channel->file.id) + 1);
+  for (i = 0, ptr = track_id; i < sizeof(channel->file.id); i++)
+    ptr += sprintf(ptr, "%02x", channel->file.id[i]);
+
+  hreq->url = asprintf_or_die("https://%s:%d/storage-resolve/files/audio/interactive/%s", server->address, server->port, track_id);
+
+  hreq->headers[0] = asprintf_or_die("Accept: application/x-protobuf");
+  hreq->headers[1] = asprintf_or_die("Client-Token: %s", session->http_clienttoken.value);
+  hreq->headers[2] = asprintf_or_die("Authorization: Bearer %s", session->http_accesstoken.value);
+
+  free(track_id);
   return 0;
 }
 
@@ -1640,11 +1688,12 @@ static struct sp_seq_request seq_requests[][7] =
     { SP_SEQ_LOGIN, "CLIENT_RESPONSE_PLAINTEXT", SP_PROTO_TCP, msg_make_client_response_plaintext, prepare_tcp, NULL, },
     { SP_SEQ_LOGIN, "CLIENT_RESPONSE_ENCRYPTED", SP_PROTO_TCP,  msg_make_client_response_encrypted, prepare_tcp, handle_tcp_generic, },
     { SP_SEQ_LOGIN, "CLIENTTOKEN", SP_PROTO_HTTP, msg_make_clienttoken, NULL, handle_clienttoken, },
-    { SP_SEQ_LOGIN, "LOGIN5", SP_PROTO_HTTP, msg_make_login5, NULL, handle_login5, },
+    { SP_SEQ_LOGIN, "LOGIN5", SP_PROTO_HTTP, msg_make_login5, prepare_http_auth, handle_login5, },
   },
   {
     { SP_SEQ_TRACK_OPEN, "MERCURY_TRACK_GET", SP_PROTO_TCP, msg_make_mercury_track_get, prepare_tcp, handle_tcp_generic, },
     { SP_SEQ_TRACK_OPEN, "AUDIO_KEY_GET", SP_PROTO_TCP, msg_make_audio_key_get, prepare_tcp, handle_tcp_generic, },
+    { SP_SEQ_TRACK_OPEN, "STORAGE_RESOLVE", SP_PROTO_HTTP, msg_make_storage_resolve_track, prepare_http_auth, handle_storage_resolve, },
   },
   {
     { SP_SEQ_EPISODE_OPEN, "MERCURY_EPISODE_GET", SP_PROTO_TCP, msg_make_mercury_episode_get, prepare_tcp, handle_tcp_generic, },
@@ -1688,39 +1737,6 @@ seq_request_prepare(struct sp_seq_request *request, struct sp_conn_callbacks *cb
 
   return request->request_prepare(request, cb, session);
 }
-
-/*
-static struct seq_definition seq_definition[] =
-{
-  { SEQ_LOGIN, }.
-  { SEQ_TRACK_OPEN, },
-  { SEQ_EPISODE_OPEN, },
-  { SEQ_MEDIA_GET, },
-  { SEQ_MEDIA_SEEK, },
-  { SEQ_PONG, },
-  { SEQ_LOGOUT, },
-};
-
-struct msg_definition
-{
-  enum sp_msg_type type;
-  int (*payload_make)(struct sp_message *, struct sp_session *);
-  int (*response_handler)(struct sp_message *, struct sp_session *);
-};
-
-static struct msg_definition msg_definition[] = {
-  { MSG_TYPE_CLIENT_HELLO, msg_make_client_hello, response_client_hello },
-  { MSG_TYPE_CLIENT_RESPONSE_PLAINTEXT, msg_make_client_response_plaintext, NULL },
-  { MSG_TYPE_CLIENT_RESPONSE_ENCRYPTED, msg_make_client_response_encrypted, response_generic },
-  { MSG_TYPE_HTTP_CLIENTTOKEN, msg_make_clienttoken, response_clienttoken },
-  { MSG_TYPE_HTTP_LOGIN5, msg_make_login5, response_login5 },
-  { MSG_TYPE_MERCURY_TRACK_GET, msg_make_mercury_track_get, response_generic },
-  { MSG_TYPE_MERCURY_EPISODE_GET, msg_make_mercury_episode_get, response_generic },
-  { MSG_TYPE_AUDIO_KEY_GET, msg_make_audio_key_get, response_generic },
-  { MSG_TYPE_CHUNK_REQUEST, msg_make_chunk_request, response_generic },
-  { MSG_TYPE_PONG, msg_make_pong, NULL },
-};
-*/
 
 void
 msg_clear(struct sp_message *msg)
@@ -1825,7 +1841,7 @@ msg_make(struct sp_message *msg, struct sp_seq_request *req, struct sp_session *
 */
 
 enum sp_error
-msg_send_tcp(struct sp_tcp_message *tmsg, struct sp_connection *conn)
+msg_tcp_send(struct sp_tcp_message *tmsg, struct sp_connection *conn)
 {
   uint8_t pkt[4096];
   ssize_t pkt_len;
@@ -1867,11 +1883,13 @@ msg_send_tcp(struct sp_tcp_message *tmsg, struct sp_connection *conn)
 }
 
 enum sp_error
-msg_send_http(struct http_response *hres, struct http_request *hreq)
+msg_http_send(struct http_response *hres, struct http_request *hreq)
 {
   int ret;
 
   hreq->user_agent = sp_sysinfo.client_name;
+
+  sp_cb.logmsg("Making http request to %s\n", hreq->url);
 
   ret = http_request(hres, hreq, NULL);
   if (ret < 0)
@@ -1898,7 +1916,7 @@ msg_pong(struct sp_session *session)
   if (ret < 0)
     RETURN_ERROR(SP_ERR_INVALID, "Error constructing pong message to Spotify");
 
-  ret = msg_send_tcp(&msg.payload.tmsg, &session->conn);
+  ret = msg_tcp_send(&msg.payload.tmsg, &session->conn);
   if (ret < 0)
     RETURN_ERROR(ret, sp_errmsg);
 

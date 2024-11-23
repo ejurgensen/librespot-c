@@ -10,7 +10,7 @@ struct http_session;
 
 struct http_request
 {
-  const char *url;
+  char *url;
 
   const char *user_agent;
   bool headers_only; // HEAD request
@@ -46,9 +46,5 @@ http_response_free(struct http_response *res, bool only_content);
 // The session is optional but increases performance when making many requests.
 int
 http_request(struct http_response *response, struct http_request *request, struct http_session *session);
-
-// Wraps around http_request() for a simple sync GET request
-int
-http_get(char **body, const char *url);
 
 #endif /* !__HTTP_H__ */
