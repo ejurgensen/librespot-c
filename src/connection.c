@@ -868,7 +868,7 @@ handle_clienttoken(struct sp_message *msg, struct sp_session *session)
 {
   struct http_response *hres = &msg->payload.hres;
   struct sp_token *token = &session->http_clienttoken;
-  Spotify__Clienttoken__Http__V0__ClientTokenResponse *response;
+  Spotify__Clienttoken__Http__V0__ClientTokenResponse *response = NULL;
   int ret;
 
   if (hres->code != HTTP_OK)
@@ -904,7 +904,7 @@ handle_login5(struct sp_message *msg, struct sp_session *session)
 {
   struct http_response *hres = &msg->payload.hres;
   struct sp_token *token = &session->http_accesstoken;
-  Spotify__Login5__V3__LoginResponse *response;
+  Spotify__Login5__V3__LoginResponse *response = NULL;
   int ret;
   int i;
 
@@ -945,7 +945,7 @@ static enum sp_error
 handle_storage_resolve(struct sp_message *msg, struct sp_session *session)
 {
   struct http_response *hres = &msg->payload.hres;
-  Spotify__Download__Proto__StorageResolveResponse *response;
+  Spotify__Download__Proto__StorageResolveResponse *response = NULL;
   struct sp_channel *channel = session->now_streaming_channel;
   int i;
   int ret;
@@ -1746,6 +1746,8 @@ msg_make_media_get(struct sp_message *msg, struct sp_session *session)
 
   hreq->headers[0] = asprintf_or_die("Range: bytes=%zu-%zu", bytes_from, bytes_to);
 
+  sp_cb.logmsg("Asking for %s\n", hreq->headers[0]);
+
   return 0;
 }
 
@@ -1763,6 +1765,9 @@ msg_is_handshake(enum sp_msg_type type)
 static struct sp_seq_request seq_requests[][7] =
 {
   {
+    { SP_SEQ_STOP },
+  },
+  {
     { SP_SEQ_LOGIN, "AP_RESOLVE", SP_PROTO_HTTP, msg_make_ap_resolve, NULL, handle_ap_resolve, },
     { SP_SEQ_LOGIN, "CLIENT_HELLO", SP_PROTO_TCP, msg_make_client_hello, prepare_tcp, handle_client_hello, },
     { SP_SEQ_LOGIN, "CLIENT_RESPONSE_PLAINTEXT", SP_PROTO_TCP, msg_make_client_response_plaintext, prepare_tcp, NULL, },
@@ -1774,6 +1779,7 @@ static struct sp_seq_request seq_requests[][7] =
     { SP_SEQ_TRACK_OPEN, "MERCURY_TRACK_GET", SP_PROTO_TCP, msg_make_mercury_track_get, prepare_tcp, handle_tcp_generic, },
     { SP_SEQ_TRACK_OPEN, "AUDIO_KEY_GET", SP_PROTO_TCP, msg_make_audio_key_get, prepare_tcp, handle_tcp_generic, },
     { SP_SEQ_TRACK_OPEN, "STORAGE_RESOLVE", SP_PROTO_HTTP, msg_make_storage_resolve_track, prepare_http_auth, handle_storage_resolve, },
+    { SP_SEQ_TRACK_OPEN, "FIRST_CHUNK", SP_PROTO_HTTP, msg_make_media_get, NULL, handle_media_get, },
   },
   {
     { SP_SEQ_EPISODE_OPEN, "MERCURY_EPISODE_GET", SP_PROTO_TCP, msg_make_mercury_episode_get, prepare_tcp, handle_tcp_generic, },

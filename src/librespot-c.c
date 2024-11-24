@@ -240,16 +240,18 @@ session_error(struct sp_session *session, enum sp_error err)
 
 // Called if an access point disconnects. Will clear current connection and
 // start a flow where the same request will be made to another access point.
-/*
 static void
 session_retry(struct sp_session *session)
 {
 // TODO fixme
-  struct sp_channel *channel = session->now_streaming_channel;
-  int ret;
+//  struct sp_channel *channel = session->now_streaming_channel;
+//  int ret;
 
   sp_cb.logmsg("Retrying after disconnect\n");
 
+  abort();
+
+/*
   channel_retry(channel);
 
   apresolve_server_mark_failed(session->conn.server);
@@ -261,8 +263,9 @@ session_retry(struct sp_session *session)
   //  type = MSG_TYPE_CLIENT_HELLO;
 
   sequence_continue(session);
-}
 */
+}
+
 
 /* ------------------------ Main sequence control --------------------------- */
 
@@ -383,10 +386,9 @@ incoming_tcp_cb(int fd, short what, void *arg)
  error:
   msg_clear(&msg);
 
-// TODO don't do this here, always let session_continue_cb do it
-//  if (ret == SP_ERR_NOCONNECTION)
-//    session_retry(session);
-//  else
+  if (ret == SP_ERR_NOCONNECTION)
+    session_retry(session);
+  else
     session_error(session, ret);
 }
 
@@ -485,36 +487,6 @@ sequence_continue(struct sp_session *session)
 //  deferred_session_failure(ret, sp_errmsg, seq_ctx->session);
 }
 
-static void
-sequence_continue_cb(int fd, short what, void *arg)
-{
-  struct sp_session *session = arg;
-  int ret;
-
-      // Handler wanted to start a new sequence
-// TODO is this needed
-//      sequence_start(seq_type, seq_ctx->session, seq_ctx->log_caller);
-//      sequence_free(seq_ctx);
-
-  session->request++;
-
-  sp_cb.logmsg("Session req is %p\n", session->request);
-
-  if (!session->request->name)
-    goto end;
-
-  sp_cb.logmsg("Name of req is %s\n", session->request->name);
-
-  sequence_continue(session);
-  return;
-
- end:
-  if (ret < 0)
-    session_error(session, ret);
-  else
-    session_return(session, SP_OK_DONE); // All done, yay!
-}
-
 // All errors that may occur during a sequence are called back async
 static void
 sequence_start(enum sp_seq_type seq_type, struct sp_session *session)
@@ -523,6 +495,30 @@ sequence_start(enum sp_seq_type seq_type, struct sp_session *session)
 
   sequence_continue(session);
 }
+
+static void
+sequence_continue_cb(int fd, short what, void *arg)
+{
+  struct sp_session *session = arg;
+  enum sp_seq_type next;
+
+  session->request++;
+  if (session->request->name)
+    {
+      sequence_continue(session);
+      return;
+    }
+  else if (session->next_seq != SP_SEQ_STOP)
+    {
+      next = session->next_seq;
+      session->next_seq = SP_SEQ_STOP;
+      sequence_start(next, session);
+      return;
+    }
+
+  session_return(session, SP_OK_DONE); // All done, yay!
+}
+
 
 /* ----------------------------- Implementation ----------------------------- */
 
@@ -586,7 +582,7 @@ track_pause(void *arg, int *retval)
     }
 
   channel_pause(channel);
-  session->next_seq = SP_SEQ_ABORT; // TODO test if this will work
+  session->next_seq = SP_SEQ_STOP; // TODO test if this will work
 
   *retval = 1;
   return COMMAND_PENDING;

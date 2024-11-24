@@ -113,7 +113,7 @@ enum sp_msg_type
 
 enum sp_seq_type
 {
-  SP_SEQ_ABORT = -1,
+  SP_SEQ_STOP = 0,
   SP_SEQ_LOGIN,
   SP_SEQ_TRACK_OPEN,
   SP_SEQ_EPISODE_OPEN,
