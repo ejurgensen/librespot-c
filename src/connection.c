@@ -623,14 +623,14 @@ resolve_server_info_set(struct sp_server *server, const char *key, json_object *
 static enum sp_error
 handle_ap_resolve(struct sp_message *msg, struct sp_session *session)
 {
-  struct http_response *res = &msg->payload.hres;
+  struct http_response *hres = &msg->payload.hres;
   json_object *jresponse = NULL;
   int ret;
 
-  if (res->code != 200)
+  if (hres->code != HTTP_OK)
     RETURN_ERROR(SP_ERR_NOCONNECTION, "AP resolver returned an error");
 
-  jresponse = json_tokener_parse(res->body);
+  jresponse = json_tokener_parse(hres->body);
   if (!jresponse)
     RETURN_ERROR(SP_ERR_NOCONNECTION, "Could not parse reply from access point resolver");
 
@@ -871,6 +871,9 @@ handle_clienttoken(struct sp_message *msg, struct sp_session *session)
   Spotify__Clienttoken__Http__V0__ClientTokenResponse *response;
   int ret;
 
+  if (hres->code != HTTP_OK)
+    RETURN_ERROR(SP_ERR_INVALID, "Request to clienttoken returned an error");
+
   response = spotify__clienttoken__http__v0__client_token_response__unpack(NULL, hres->body_len, hres->body);
   if (!response)
     RETURN_ERROR(SP_ERR_INVALID, "Could not parse clienttoken response");
@@ -904,6 +907,9 @@ handle_login5(struct sp_message *msg, struct sp_session *session)
   Spotify__Login5__V3__LoginResponse *response;
   int ret;
   int i;
+
+  if (hres->code != HTTP_OK)
+    RETURN_ERROR(SP_ERR_INVALID, "Request to login5 returned an error");
 
   response = spotify__login5__v3__login_response__unpack(NULL, hres->body_len, hres->body);
   if (!response)
@@ -944,6 +950,9 @@ handle_storage_resolve(struct sp_message *msg, struct sp_session *session)
   int i;
   int ret;
 
+  if (hres->code != HTTP_OK)
+    RETURN_ERROR(SP_ERR_INVALID, "Request to storage-resolve returned an error");
+
   response = spotify__download__proto__storage_resolve_response__unpack(NULL, hres->body_len, hres->body);
   if (!response)
     RETURN_ERROR(SP_ERR_INVALID, "Could not parse storage-resolve response");
@@ -968,12 +977,57 @@ handle_storage_resolve(struct sp_message *msg, struct sp_session *session)
   return ret;
 }
 
+// TODO also save the byte size and allow non word-aligned sizes
+static int
+file_size_get(struct sp_channel *channel, struct http_response *hres)
+{
+  char *content_range;
+  const char *colon;
+  int sz;
+
+  content_range = http_response_header_find("Content-Range", hres);
+  if (!content_range || !(colon = strchr(content_range, '/')))
+    return -1;
+
+  sz = atoi(colon + 1);
+  if (sz <= 0 || sz % 4 != 0)
+    return -1;
+
+  channel->file.len_words = sz / 4;
+  return 0;
+}
+
+// Ref. chunked_reader.go
 static enum sp_error
 handle_media_get(struct sp_message *msg, struct sp_session *session)
 {
-  sp_cb.logmsg("Received %zu bytes\n", msg->payload.hres.body_len);
+  struct http_response *hres = &msg->payload.hres;
+  struct sp_channel *channel = session->now_streaming_channel;
+  const char *errmsg;
+  int ret;
 
-  return SP_OK_DONE;
+  if (hres->code != HTTP_PARTIALCONTENT)
+    RETURN_ERROR(SP_ERR_NOCONNECTION, "Request for Spotify media returned an error");
+
+  if (channel->file.len_words == 0 && file_size_get(channel, hres) < 0)
+    RETURN_ERROR(SP_ERR_INVALID, "Invalid content-range, can't determine media size");
+
+  sp_cb.logmsg("Received %zu bytes, size is %d\n", hres->body_len, channel->file.len_words * 4);
+
+  // Not sure if the channel concept even makes sense for http, but nonetheless
+  // we use it to stay consistent with the old tcp protocol
+  ret = channel_http_body_read(channel, hres->body, hres->body_len);
+  if (ret < 0)
+    goto error;
+
+  // Save any audio data to a buffer that will be written to audio_fd[1] when
+  // it is writable. Note that request for next chunk will also happen then.
+  evbuffer_add(channel->audio_buf, channel->body.data, channel->body.data_len);
+
+  return SP_OK_DATA;
+
+ error:
+  return ret;
 }
 
 static enum sp_error
@@ -1678,8 +1732,19 @@ msg_make_media_get(struct sp_message *msg, struct sp_session *session)
 {
   struct http_request *hreq = &msg->payload.hreq;
   struct sp_channel *channel = session->now_streaming_channel;
+  size_t bytes_from;
+  size_t bytes_to;
+
+  bytes_from = 4 * channel->file.offset_words;
+
+  if (!channel->file.len_words || channel->file.len_words > channel->file.offset_words + SP_CHUNK_LEN_WORDS)
+    bytes_to = 4 * (channel->file.offset_words + SP_CHUNK_LEN_WORDS) - 1;
+  else
+    bytes_to = 4 * channel->file.len_words - 1;
 
   hreq->url = strdup(channel->file.cdnurl[0]);
+
+  hreq->headers[0] = asprintf_or_die("Range: bytes=%zu-%zu", bytes_from, bytes_to);
 
   return 0;
 }
@@ -1912,8 +1977,6 @@ msg_http_send(struct http_response *hres, struct http_request *hreq)
   ret = http_request(hres, hreq, NULL);
   if (ret < 0)
     RETURN_ERROR(SP_ERR_NOCONNECTION, "No connection to Spotify for http request");
-  if (hres->code != 200) // TODO expected return code should be part of msg
-    RETURN_ERROR(SP_ERR_INVALID, "Request to Spotify returned an error");
 
   return SP_OK_DONE;
 

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h> // strncasecmp
 #include <limits.h>
 #include <sys/param.h>
 #include <sys/types.h>
@@ -32,42 +33,42 @@ http_session_deinit(struct http_session *session)
 }
 
 void
-http_request_free(struct http_request *req, bool only_content)
+http_request_free(struct http_request *request, bool only_content)
 {
   int i;
 
-  if (!req)
+  if (!request)
     return;
 
-  free(req->url);
-  free(req->body);
+  free(request->url);
+  free(request->body);
 
-  for (i = 0; req->headers[i]; i++)
-    free(req->headers[i]);
+  for (i = 0; request->headers[i]; i++)
+    free(request->headers[i]);
 
   if (only_content)
-    memset(req, 0, sizeof(struct http_request));
+    memset(request, 0, sizeof(struct http_request));
   else
-    free(req);
+    free(request);
 }
 
 void
-http_response_free(struct http_response *res, bool only_content)
+http_response_free(struct http_response *response, bool only_content)
 {
   int i;
 
-  if (!res)
+  if (!response)
     return;
 
-  free(res->body);
+  free(response->body);
 
-  for (i = 0; res->headers[i]; i++)
-    free(res->headers[i]);
+  for (i = 0; response->headers[i]; i++)
+    free(response->headers[i]);
 
   if (only_content)
-    memset(res, 0, sizeof(struct http_response));
+    memset(response, 0, sizeof(struct http_response));
   else
-    free(res);
+    free(response);
 }
 
 static size_t
@@ -94,6 +95,23 @@ header_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
 
   return nmemb;
 }
+
+static void
+headers_save(struct http_response *response, CURL *curl)
+{
+  struct curl_header *prev = NULL;
+  struct curl_header *header;
+  int i = 0;
+  
+  while ((header = curl_easy_nextheader(curl, CURLH_HEADER, 0, prev)) && i < HTTP_MAX_HEADERS)
+    {
+      if (asprintf(&response->headers[i], "%s:%s", header->name, header->value) < 0)
+	return;
+
+      prev = header;
+      i++;
+    }
+ }
 
 static size_t
 body_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
@@ -179,9 +197,6 @@ http_request(struct http_response *response, struct http_request *request, struc
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, body_cb);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
 
-  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
-  curl_easy_setopt(curl, CURLOPT_HEADERDATA, response);
-
   // Allow redirects
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
   curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5);
@@ -196,6 +211,8 @@ http_request(struct http_response *response, struct http_request *request, struc
   res = curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &content_length);
   response->content_length = (res == CURLE_OK) ? (ssize_t)content_length : -1;
 
+  headers_save(response, curl);
+
   curl_slist_free_all(headers);
   if (!session)
     curl_easy_cleanup(curl);
@@ -208,4 +225,21 @@ http_request(struct http_response *response, struct http_request *request, struc
     curl_easy_cleanup(curl);
 
   return -1;
+}
+
+char *
+http_response_header_find(const char *key, struct http_response *response)
+{
+  char **header;
+  size_t key_len;
+
+  key_len = strlen(key);
+
+  for (header = response->headers; *header; header++)
+    {
+      if (strncasecmp(key, *header, key_len) == 0 && (*header)[key_len] == ':')
+        return *header + key_len + 1;
+    }
+
+  return NULL;
 }

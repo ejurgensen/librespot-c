@@ -104,26 +104,6 @@ enum sp_error
   SP_ERR_TIMEOUT      = -9,
 };
 
-/*
-#define MSG_TYPE_F_HTTP (1 << 15)
-
-enum sp_msg_type
-{
-  MSG_TYPE_NONE                      = 0,
-  MSG_TYPE_CLIENT_HELLO              = 1,
-  MSG_TYPE_CLIENT_RESPONSE_PLAINTEXT = 2,
-  MSG_TYPE_CLIENT_RESPONSE_ENCRYPTED = 3,
-  MSG_TYPE_PONG                      = 4,
-  MSG_TYPE_MERCURY_TRACK_GET         = 5,
-  MSG_TYPE_MERCURY_EPISODE_GET       = 6,
-  MSG_TYPE_AUDIO_KEY_GET             = 7,
-  MSG_TYPE_CHUNK_REQUEST             = 8,
-  MSG_TYPE_HTTP_CLIENTTOKEN          = 1 | MSG_TYPE_F_HTTP,
-  MSG_TYPE_HTTP_LOGIN5               = 2 | MSG_TYPE_F_HTTP,
-  MSG_TYPE_HTTP_RESOLVESTORAGE       = 3 | MSG_TYPE_F_HTTP,
-};
-*/
-
 enum sp_msg_type
 {
   SP_MSG_TYPE_HTTP_REQ,

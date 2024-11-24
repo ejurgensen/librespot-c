@@ -326,7 +326,7 @@ channel_header_handle(struct sp_channel *channel, struct sp_channel_header *head
 }
 
 static ssize_t
-channel_header_trailer_read(struct sp_channel *channel, uint8_t *msg, size_t msg_len, struct sp_session *session)
+channel_header_trailer_read(struct sp_channel *channel, uint8_t *msg, size_t msg_len)
 {
   ssize_t parsed_len;
   ssize_t consumed_len;
@@ -374,8 +374,8 @@ channel_header_trailer_read(struct sp_channel *channel, uint8_t *msg, size_t msg
   return ret;
 }
 
-static ssize_t
-channel_data_read(struct sp_channel *channel, uint8_t *msg, size_t msg_len, struct sp_session *session)
+static int
+channel_data_read(struct sp_channel *channel, uint8_t *msg, size_t msg_len)
 {
   const char *errmsg;
   int ret;
@@ -389,7 +389,6 @@ channel_data_read(struct sp_channel *channel, uint8_t *msg, size_t msg_len, stru
     RETURN_ERROR(SP_ERR_DECRYPTION, errmsg);
 
   // Skip Spotify header
-  // TODO What to do here when seeking
   if (!channel->is_spotify_header_received)
     {
       if (msg_len < SP_OGG_HEADER_LEN)
@@ -469,7 +468,7 @@ channel_msg_read(uint16_t *channel_id, uint8_t *msg, size_t msg_len, struct sp_s
   msg_len -= sizeof(be);
 
   // Will set data_mode, end_of_file and end_of_chunk as appropriate
-  consumed_len = channel_header_trailer_read(channel, msg, msg_len, session);
+  consumed_len = channel_header_trailer_read(channel, msg, msg_len);
   if (consumed_len < 0)
     RETURN_ERROR((int)consumed_len, sp_errmsg);
 
@@ -482,12 +481,21 @@ channel_msg_read(uint16_t *channel_id, uint8_t *msg, size_t msg_len, struct sp_s
   if (!channel->is_data_mode || !(msg_len > 0))
     return 0; // Not in data mode or no data to read
 
-  consumed_len = channel_data_read(channel, msg, msg_len, session);
-  if (consumed_len < 0)
-    RETURN_ERROR((int)consumed_len, sp_errmsg);
+  ret = channel_data_read(channel, msg, msg_len);
+  if (ret < 0)
+    RETURN_ERROR(ret, sp_errmsg);
 
   return 0;
 
  error:
   return ret;
+}
+
+int
+channel_http_body_read(struct sp_channel *channel, uint8_t *body, size_t body_len)
+{
+  // With http there is no header, it's just the file
+  channel->is_spotify_header_received = true;
+
+  return channel_data_read(channel, body, body_len);
 }
