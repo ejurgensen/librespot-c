@@ -491,11 +491,23 @@ channel_msg_read(uint16_t *channel_id, uint8_t *msg, size_t msg_len, struct sp_s
   return ret;
 }
 
+// With http there is no header or trailer, it's just the file
 int
 channel_http_body_read(struct sp_channel *channel, uint8_t *body, size_t body_len)
 {
-  // With http there is no header, it's just the file
+  int ret;
+
   channel->is_spotify_header_received = true;
 
-  return channel_data_read(channel, body, body_len);
+  ret = channel_data_read(channel, body, body_len);
+  if (ret < 0)
+    goto error;
+
+  channel->file.end_of_chunk = true;
+  channel->file.end_of_file = (channel->file.received_words >= channel->file.len_words);
+  channel->file.offset_words += SP_CHUNK_LEN_WORDS;
+  return 0;
+
+ error:
+  return ret;
 }

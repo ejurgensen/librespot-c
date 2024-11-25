@@ -312,11 +312,23 @@ timeout_tcp_cb(int fd, short what, void *arg)
 }
 
 static void
+audio_data_received(struct sp_session *session)
+{
+  struct sp_channel *channel = session->now_streaming_channel;
+
+  if (channel->state == SP_CHANNEL_STATE_PLAYING && !channel->file.end_of_file)
+    session->next_seq = SP_SEQ_MEDIA_GET;
+  if (channel->progress_cb)
+    channel->progress_cb(channel->audio_fd[0], channel->cb_arg, 4 * channel->file.received_words - SP_OGG_HEADER_LEN, 4 * channel->file.len_words - SP_OGG_HEADER_LEN);
+
+  event_add(channel->audio_write_ev, NULL);
+}
+
+static void
 incoming_tcp_cb(int fd, short what, void *arg)
 {
   struct sp_session *session = arg;
   struct sp_connection *conn = &session->conn;
-  struct sp_channel *channel = session->now_streaming_channel;
   struct sp_message msg = { .type = SP_MSG_TYPE_TCP };
   int ret;
 
@@ -356,13 +368,9 @@ incoming_tcp_cb(int fd, short what, void *arg)
       case SP_OK_WAIT: // Incomplete, wait for more data
 	break;
       case SP_OK_DATA:
-        if (channel->state == SP_CHANNEL_STATE_PLAYING && !channel->file.end_of_file)
-	  session->next_seq = SP_SEQ_MEDIA_GET;
-	if (channel->progress_cb)
-	  channel->progress_cb(channel->audio_fd[0], channel->cb_arg, 4 * channel->file.received_words - SP_OGG_HEADER_LEN, 4 * channel->file.len_words - SP_OGG_HEADER_LEN);
+	audio_data_received(session);
 
 	event_del(conn->timeout_ev);
-	event_add(channel->audio_write_ev, NULL);
 	break;
       case SP_OK_DONE: // Got the response we expected, but possibly more to process
 	if (evbuffer_get_length(conn->incoming) > 0)
@@ -430,8 +438,10 @@ msg_send(struct sp_message *msg, struct sp_session *session)
       msg_clear(&res);
       if (ret < 0)
         RETURN_ERROR(ret, sp_errmsg);
-
-      event_active(session->continue_ev, 0, 0);
+      else if (ret == SP_OK_DATA)
+	audio_data_received(session);
+      else
+	event_active(session->continue_ev, 0, 0);
     }
   else
     RETURN_ERROR(SP_ERR_INVALID, "Bug! Request is missing protocol type");
@@ -449,9 +459,6 @@ sequence_continue(struct sp_session *session)
   struct sp_message msg = { 0 };
   int ret;
 
-  assert(session->request);
-  assert(session->request->name);
-
   sp_cb.logmsg("Preparing request '%s'\n", session->request->name);
 
   // Checks if the dependencies for making the request are met - e.g. do we have
@@ -459,7 +466,7 @@ sequence_continue(struct sp_session *session)
   ret = seq_request_prepare(session->request, &cb, session);
   if (ret < 0)
     RETURN_ERROR(ret, sp_errmsg);
-//TODO start a new sequence, e.g. GET_TOKEN?
+//TODO start a new sequence, e.g. GET_TOKEN? -> SP_OK_WAIT?
 
   ret = msg_make(&msg, session->request, session);
   if (ret > 0)
@@ -479,44 +486,39 @@ sequence_continue(struct sp_session *session)
 
  error:
   msg_clear(&msg);
-
-  // Must be deferred, otherwise sequence_start() could invalidate the session,
-  // meaning any dereference of the session by the caller after sequence_start()
-  // would segfault.
-// TODO
-//  deferred_session_failure(ret, sp_errmsg, seq_ctx->session);
-}
-
-// All errors that may occur during a sequence are called back async
-static void
-sequence_start(enum sp_seq_type seq_type, struct sp_session *session)
-{
-  session->request = seq_request_get(seq_type, 0);
-
-  sequence_continue(session);
+  session_error(session, ret);
 }
 
 static void
 sequence_continue_cb(int fd, short what, void *arg)
 {
   struct sp_session *session = arg;
-  enum sp_seq_type next;
 
-  session->request++;
-  if (session->request->name)
+  // If set, we are in a sequence and should proceed to the next request
+  if (session->request)
+    session->request++;
+
+  // Starting a sequence, or ending one and should possibly start the next
+  if (!session->request || !session->request->name)
     {
-      sequence_continue(session);
-      return;
-    }
-  else if (session->next_seq != SP_SEQ_STOP)
-    {
-      next = session->next_seq;
+      session->request = seq_request_get(session->next_seq, 0);
       session->next_seq = SP_SEQ_STOP;
-      sequence_start(next, session);
-      return;
     }
 
-  session_return(session, SP_OK_DONE); // All done, yay!
+  if (session->request && session->request->name)
+    sequence_continue(session);
+  else
+    session_return(session, SP_OK_DONE); // All done, yay!
+}
+
+// All errors that may occur during a sequence are called back async
+static void
+sequence_start(enum sp_seq_type seq_type, struct sp_session *session)
+{
+  session->request = NULL;
+  session->next_seq = seq_type;
+
+  event_active(session->continue_ev, 0, 0);
 }
 
 

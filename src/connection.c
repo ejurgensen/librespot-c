@@ -1765,6 +1765,7 @@ msg_is_handshake(enum sp_msg_type type)
 static struct sp_seq_request seq_requests[][7] =
 {
   {
+    // Just a dummy so that the array is aligned with the enum
     { SP_SEQ_STOP },
   },
   {
