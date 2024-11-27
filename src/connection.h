@@ -4,6 +4,9 @@ ap_disconnect(struct sp_connection *conn);
 enum sp_error
 ap_connect(struct sp_connection *conn, struct sp_server *server, time_t *cooldown_ts, struct sp_conn_callbacks *cb, void *cb_arg);
 
+void
+ap_blacklist(struct sp_server *server);
+
 int
 seq_requests_check(void);
 

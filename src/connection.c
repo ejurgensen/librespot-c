@@ -308,6 +308,7 @@ tcp_connection_make(struct sp_connection *conn, struct sp_server *server, struct
   return 0;
 
  error:
+  server->last_failed_ts = time(NULL);
   return ret;
 }
 
@@ -351,6 +352,11 @@ ap_connect(struct sp_connection *conn, struct sp_server *server, time_t *cooldow
   return ret;
 }
 
+void
+ap_blacklist(struct sp_server *server)
+{
+  server->last_failed_ts = time(NULL);
+}
 
 /* ------------------------------ Raw packets ------------------------------- */
 
@@ -880,11 +886,12 @@ handle_clienttoken(struct sp_message *msg, struct sp_session *session)
 
   if (response->response_type == SPOTIFY__CLIENTTOKEN__HTTP__V0__CLIENT_TOKEN_RESPONSE_TYPE__RESPONSE_GRANTED_TOKEN_RESPONSE)
     {
-      snprintf(token->value, sizeof(token->value), "%s", response->granted_token->token);
-      // TODO check truncation
+      ret = snprintf(token->value, sizeof(token->value), "%s", response->granted_token->token);
+      if (ret < 0 || ret >= sizeof(token->value))
+	RETURN_ERROR(SP_ERR_INVALID, "Unexpected clienttoken length");
+
       token->expires_after_seconds = response->granted_token->expires_after_seconds;
       token->refresh_after_seconds = response->granted_token->refresh_after_seconds;
-      // TODO check and refresh
     }
   else if (response->response_type == SPOTIFY__CLIENTTOKEN__HTTP__V0__CLIENT_TOKEN_RESPONSE_TYPE__RESPONSE_CHALLENGES_RESPONSE)
     RETURN_ERROR(SP_ERR_INVALID, "Unsupported clienttoken response");
@@ -921,12 +928,14 @@ handle_login5(struct sp_message *msg, struct sp_session *session)
   switch (response->response_case)
     {
       case SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__RESPONSE_OK:
-        snprintf(token->value, sizeof(token->value), "%s", response->ok->access_token);
-        // TODO check truncation
+        ret = snprintf(token->value, sizeof(token->value), "%s", response->ok->access_token);
+	if (ret < 0 || ret >= sizeof(token->value))
+	  RETURN_ERROR(SP_ERR_INVALID, "Unexpected access_token length");
+
         token->expires_after_seconds = response->ok->access_token_expires_in;
         break;
       case SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__RESPONSE_CHALLENGES:
-        printf("Login %zu challenges\n", response->challenges->n_challenges);
+        sp_cb.logmsg("Login %zu challenges\n", response->challenges->n_challenges);
         // TODO support hashcash challenges
         break;
       case SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__RESPONSE_ERROR:

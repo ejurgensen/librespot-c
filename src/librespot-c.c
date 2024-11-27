@@ -78,6 +78,9 @@ static struct timeval sp_response_timeout_tv = { SP_AP_TIMEOUT_SECS, 0 };
 static int debug_disconnect_counter;
 #endif
 
+// Forwards
+static void
+sequence_continue(struct sp_session *session);
 
 /* -------------------------------- Session --------------------------------- */
 
@@ -240,30 +243,22 @@ session_error(struct sp_session *session, enum sp_error err)
 
 // Called if an access point disconnects. Will clear current connection and
 // start a flow where the same request will be made to another access point.
+// This is currently only implemented for the non-http connection.
 static void
 session_retry(struct sp_session *session)
 {
-// TODO fixme
-//  struct sp_channel *channel = session->now_streaming_channel;
-//  int ret;
+  struct sp_channel *channel = session->now_streaming_channel;
+  int ret;
 
   sp_cb.logmsg("Retrying after disconnect\n");
 
-  abort();
-
-/*
   channel_retry(channel);
 
-  apresolve_server_mark_failed(session->conn.server);
+  ap_blacklist(session->conn.server);
 
   ap_disconnect(&session->conn);
 
-  // If we were in the middle of a handshake when disconnected we must restart
-  // if (msg_is_handshake(type))
-  //  type = MSG_TYPE_CLIENT_HELLO;
-
   sequence_continue(session);
-*/
 }
 
 
@@ -467,6 +462,7 @@ sequence_continue(struct sp_session *session)
   if (ret < 0)
     RETURN_ERROR(ret, sp_errmsg);
 //TODO start a new sequence, e.g. GET_TOKEN? -> SP_OK_WAIT?
+//TODO noconnection -> AP_RESOLVE
 
   ret = msg_make(&msg, session->request, session);
   if (ret > 0)
