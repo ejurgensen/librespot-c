@@ -616,7 +616,7 @@ track_seek(void *arg, int *retval)
   // AES decryptor to match the new position. It also flushes the pipe.
   channel_seek(channel, cmdargs->seek_pos);
 
-  sequence_start(SP_SEQ_MEDIA_SEEK, session);
+  sequence_start(SP_SEQ_MEDIA_GET, session);
 
   *retval = 1;
   return COMMAND_PENDING;

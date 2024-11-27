@@ -491,13 +491,11 @@ channel_msg_read(uint16_t *channel_id, uint8_t *msg, size_t msg_len, struct sp_s
   return ret;
 }
 
-// With http there is no header or trailer, it's just the file
+// With http there is the Spotify Ogg header, but no chunk header/trailer
 int
 channel_http_body_read(struct sp_channel *channel, uint8_t *body, size_t body_len)
 {
   int ret;
-
-  channel->is_spotify_header_received = true;
 
   ret = channel_data_read(channel, body, body_len);
   if (ret < 0)

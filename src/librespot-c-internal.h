@@ -119,7 +119,6 @@ enum sp_seq_type
   SP_SEQ_EPISODE_OPEN,
   SP_SEQ_MEDIA_GET_TCP, // Old protocol
   SP_SEQ_MEDIA_GET,
-  SP_SEQ_MEDIA_SEEK,
   SP_SEQ_PONG,
 };
 

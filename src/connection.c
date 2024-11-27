@@ -1793,10 +1793,6 @@ static struct sp_seq_request seq_requests[][7] =
     { SP_SEQ_MEDIA_GET, "MEDIA_GET", SP_PROTO_HTTP, msg_make_media_get, NULL, handle_media_get, },
   },
   {
-// TODO
-    { SP_SEQ_MEDIA_SEEK, "CHUNK_SEEK", SP_PROTO_TCP, msg_make_chunk_request, prepare_tcp, handle_tcp_generic, },
-  },
-  {
     { SP_SEQ_PONG, "PONG", SP_PROTO_TCP, msg_make_pong, prepare_tcp, NULL, },
   },
 };
@@ -1853,82 +1849,6 @@ msg_make(struct sp_message *msg, struct sp_seq_request *req, struct sp_session *
 
   return req->payload_make(msg, session);
 }
-
-/*
-  switch (type)
-    {
-      case MSG_TYPE_CLIENT_HELLO:
-	msg->len = msg_make_client_hello(msg->data, sizeof(msg->data), session);
-	msg->type_next = MSG_TYPE_CLIENT_RESPONSE_PLAINTEXT;
-	msg->add_version_header = true;
-	msg->response_handler = response_client_hello;
-	break;
-      case MSG_TYPE_CLIENT_RESPONSE_PLAINTEXT:
-	msg->len = msg_make_client_response_plaintext(msg->data, sizeof(msg->data), session);
-	msg->type_next = MSG_TYPE_CLIENT_RESPONSE_ENCRYPTED;
-	msg->response_handler = NULL; // No response expected
-	break;
-      case MSG_TYPE_CLIENT_RESPONSE_ENCRYPTED:
-	msg->len = msg_make_client_response_encrypted(msg->data, sizeof(msg->data), session);
-	msg->type_next = MSG_TYPE_HTTP_CLIENTTOKEN;
-	msg->cmd = CmdLogin;
-        msg->encrypt = true;
-	msg->response_handler = response_generic;
-	break;
-      case MSG_TYPE_HTTP_CLIENTTOKEN:
-	msg->len = msg_make_clienttoken(msg->data, sizeof(msg->data), session);
-	msg->url = "https://clienttoken.spotify.com/v1/clienttoken";
-	msg->type_next = MSG_TYPE_HTTP_LOGIN5;
-	msg->response_handler = response_clienttoken;
-	msg->is_http = true;
-	break;
-      case MSG_TYPE_HTTP_LOGIN5:
-	msg->len = msg_make_login5(msg->data, sizeof(msg->data), session);
-	msg->url = "https://login5.spotify.com/v3/login";
-	msg->header[0] = clienttoken;
-	msg->response_handler = response_login5;
-	msg->is_http = true;
-	break;
-      case MSG_TYPE_MERCURY_TRACK_GET:
-	msg->len = msg_make_mercury_track_get(msg->data, sizeof(msg->data), session);
-	msg->cmd = CmdMercuryReq;
-        msg->encrypt = true;
-	msg->type_next = MSG_TYPE_AUDIO_KEY_GET;
-	msg->response_handler = response_generic;
-	break;
-      case MSG_TYPE_MERCURY_EPISODE_GET:
-	msg->len = msg_make_mercury_episode_get(msg->data, sizeof(msg->data), session);
-	msg->cmd = CmdMercuryReq;
-        msg->encrypt = true;
-	msg->type_next = MSG_TYPE_AUDIO_KEY_GET;
-	msg->response_handler = response_generic;
-	break;
-      case MSG_TYPE_AUDIO_KEY_GET:
-	msg->len = msg_make_audio_key_get(msg->data, sizeof(msg->data), session);
-	msg->cmd = CmdRequestKey;
-        msg->encrypt = true;
-	msg->type_next = MSG_TYPE_CHUNK_REQUEST;
-	msg->response_handler = response_generic;
-	break;
-      case MSG_TYPE_CHUNK_REQUEST:
-	msg->len = msg_make_chunk_request(msg->data, sizeof(msg->data), session);
-	msg->cmd = CmdStreamChunk;
-        msg->encrypt = true;
-	msg->response_handler = response_generic;
-	break;
-      case MSG_TYPE_PONG:
-	msg->len = 4;
-	msg->cmd = CmdPong;
-        msg->encrypt = true;
-	memset(msg->data, 0, msg->len); // librespot just replies with zeroes
-	break;
-      default:
-	msg->len = -1;
-    }
-
-  return (msg->len < 0) ? -1 : 0;
-}
-*/
 
 enum sp_error
 msg_tcp_send(struct sp_tcp_message *tmsg, struct sp_connection *conn)
