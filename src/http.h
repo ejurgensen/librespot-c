@@ -33,7 +33,10 @@
 #define HTTP_BADGATEWAY        502	/**< received an invalid response from the upstream */
 #define HTTP_SERVUNAVAIL       503	/**< the server is not available */
 
-struct http_session;
+struct http_session
+{
+  void *internal;
+};
 
 struct http_request
 {

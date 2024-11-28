@@ -540,14 +540,13 @@ mercury_parse(struct sp_mercury *mercury, uint8_t *payload, size_t payload_len)
 /* ---------------------Request preparation (dependencies) ------------------ */
 
 static enum sp_error
-prepare_tcp(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct sp_session *session)
+prepare_tcp_handshake(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct sp_session *session)
 {
-  struct sp_connection *conn = &session->conn;
   int ret;
 
-  if (!conn->is_connected)
+  if (!session->conn.is_connected)
     {
-      ret = ap_connect(conn, &session->accesspoint, &session->cooldown_ts, cb, session);
+      ret = ap_connect(&session->conn, &session->accesspoint, &session->cooldown_ts, cb, session);
       if (ret < 0)
 	RETURN_ERROR(ret, sp_errmsg);
     }
@@ -559,9 +558,22 @@ prepare_tcp(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct
 }
 
 static enum sp_error
-prepare_http_auth(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct sp_session *session)
+prepare_tcp(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct sp_session *session)
 {
-  // TODO check that the tokens aren't expired for login5 and storage-resolve
+  int ret;
+
+  ret = prepare_tcp_handshake(request, cb, session);
+  if (ret < 0)
+    return ret;
+
+  if (!session->conn.handshake_completed)
+    {
+      // Queue the current request
+      seq_next_set(session, request->seq_type);
+      session->request = seq_request_get(SP_SEQ_LOGIN, 0);
+      return SP_OK_WAIT;
+    }
+
   return SP_OK_DONE;
 }
 
@@ -892,6 +904,7 @@ handle_clienttoken(struct sp_message *msg, struct sp_session *session)
 
       token->expires_after_seconds = response->granted_token->expires_after_seconds;
       token->refresh_after_seconds = response->granted_token->refresh_after_seconds;
+      token->received_ts = time(NULL);
     }
   else if (response->response_type == SPOTIFY__CLIENTTOKEN__HTTP__V0__CLIENT_TOKEN_RESPONSE_TYPE__RESPONSE_CHALLENGES_RESPONSE)
     RETURN_ERROR(SP_ERR_INVALID, "Unsupported clienttoken response");
@@ -928,18 +941,19 @@ handle_login5(struct sp_message *msg, struct sp_session *session)
   switch (response->response_case)
     {
       case SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__RESPONSE_OK:
-        ret = snprintf(token->value, sizeof(token->value), "%s", response->ok->access_token);
+	ret = snprintf(token->value, sizeof(token->value), "%s", response->ok->access_token);
 	if (ret < 0 || ret >= sizeof(token->value))
 	  RETURN_ERROR(SP_ERR_INVALID, "Unexpected access_token length");
 
-        token->expires_after_seconds = response->ok->access_token_expires_in;
-        break;
+	token->expires_after_seconds = response->ok->access_token_expires_in;
+	token->received_ts = time(NULL);
+	break;
       case SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__RESPONSE_CHALLENGES:
-        sp_cb.logmsg("Login %zu challenges\n", response->challenges->n_challenges);
-        // TODO support hashcash challenges
-        break;
+	sp_cb.logmsg("Login %zu challenges\n", response->challenges->n_challenges);
+	// TODO support hashcash challenges
+	break;
       case SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__RESPONSE_ERROR:
-        RETURN_ERROR(SP_ERR_LOGINFAILED, err2txt(response->error, sp_login5_error_map, ARRAY_SIZE(sp_login5_error_map)));
+	RETURN_ERROR(SP_ERR_LOGINFAILED, err2txt(response->error, sp_login5_error_map, ARRAY_SIZE(sp_login5_error_map)));
     }
 
   spotify__login5__v3__login_response__free_unpacked(response, NULL);
@@ -1621,6 +1635,13 @@ msg_make_clienttoken(struct sp_message *msg, struct sp_session *session)
   Spotify__Clienttoken__Http__V0__ClientDataRequest dreq = SPOTIFY__CLIENTTOKEN__HTTP__V0__CLIENT_DATA_REQUEST__INIT;
   Spotify__Clienttoken__Data__V0__ConnectivitySdkData sdk_data = SPOTIFY__CLIENTTOKEN__DATA__V0__CONNECTIVITY_SDK_DATA__INIT;
   Spotify__Clienttoken__Data__V0__PlatformSpecificData platform_data = SPOTIFY__CLIENTTOKEN__DATA__V0__PLATFORM_SPECIFIC_DATA__INIT;
+  struct sp_token *token = &session->http_clienttoken;
+  time_t now = time(NULL);
+  bool must_refresh;
+
+  must_refresh = (now > token->received_ts + token->expires_after_seconds) || (now > token->received_ts + token->refresh_after_seconds);
+  if (!must_refresh)
+    return 1; // We have a valid token, tell caller to go to next request
 
 #ifdef HAVE_SYS_UTSNAME_H
   Spotify__Clienttoken__Data__V0__NativeDesktopMacOSData desktop_macos = SPOTIFY__CLIENTTOKEN__DATA__V0__NATIVE_DESKTOP_MAC_OSDATA__INIT;
@@ -1680,6 +1701,13 @@ msg_make_login5(struct sp_message *msg, struct sp_session *session)
   Spotify__Login5__V3__LoginRequest req = SPOTIFY__LOGIN5__V3__LOGIN_REQUEST__INIT;
   Spotify__Login5__V3__ClientInfo client_info = SPOTIFY__LOGIN5__V3__CLIENT_INFO__INIT;
   Spotify__Login5__V3__Credentials__StoredCredential stored_credential = SPOTIFY__LOGIN5__V3__CREDENTIALS__STORED_CREDENTIAL__INIT;
+  struct sp_token *token = &session->http_accesstoken;
+  time_t now = time(NULL);
+  bool must_refresh;
+
+  must_refresh = (now > token->received_ts + token->expires_after_seconds);
+  if (!must_refresh)
+    return 1; // We have a valid token, tell caller to go to next request
 
   if (session->credentials.stored_cred_len == 0)
     return -1;
@@ -1760,16 +1788,6 @@ msg_make_media_get(struct sp_message *msg, struct sp_session *session)
   return 0;
 }
 
-/*
-bool
-msg_is_handshake(enum sp_msg_type type)
-{
-  return ( type == MSG_TYPE_CLIENT_HELLO ||
-           type == MSG_TYPE_CLIENT_RESPONSE_PLAINTEXT ||
-           type == MSG_TYPE_CLIENT_RESPONSE_ENCRYPTED );
-}
-*/
-
 // Must be large enough to also include null terminating elements
 static struct sp_seq_request seq_requests[][7] =
 {
@@ -1777,21 +1795,24 @@ static struct sp_seq_request seq_requests[][7] =
     // Just a dummy so that the array is aligned with the enum
     { SP_SEQ_STOP },
   },
+  // TODO split so we don't do unnecessary ap_resolve
   {
     { SP_SEQ_LOGIN, "AP_RESOLVE", SP_PROTO_HTTP, msg_make_ap_resolve, NULL, handle_ap_resolve, },
-    { SP_SEQ_LOGIN, "CLIENT_HELLO", SP_PROTO_TCP, msg_make_client_hello, prepare_tcp, handle_client_hello, },
-    { SP_SEQ_LOGIN, "CLIENT_RESPONSE_PLAINTEXT", SP_PROTO_TCP, msg_make_client_response_plaintext, prepare_tcp, NULL, },
-    { SP_SEQ_LOGIN, "CLIENT_RESPONSE_ENCRYPTED", SP_PROTO_TCP,  msg_make_client_response_encrypted, prepare_tcp, handle_tcp_generic, },
-    { SP_SEQ_LOGIN, "CLIENTTOKEN", SP_PROTO_HTTP, msg_make_clienttoken, NULL, handle_clienttoken, },
-    { SP_SEQ_LOGIN, "LOGIN5", SP_PROTO_HTTP, msg_make_login5, prepare_http_auth, handle_login5, },
+    { SP_SEQ_LOGIN, "CLIENT_HELLO", SP_PROTO_TCP, msg_make_client_hello, prepare_tcp_handshake, handle_client_hello, },
+    { SP_SEQ_LOGIN, "CLIENT_RESPONSE_PLAINTEXT", SP_PROTO_TCP, msg_make_client_response_plaintext, prepare_tcp_handshake, NULL, },
+    { SP_SEQ_LOGIN, "CLIENT_RESPONSE_ENCRYPTED", SP_PROTO_TCP,  msg_make_client_response_encrypted, prepare_tcp_handshake, handle_tcp_generic, },
   },
   {
+    // The first two will be skipped if valid tokens already exist
+    { SP_SEQ_TRACK_OPEN, "CLIENTTOKEN", SP_PROTO_HTTP, msg_make_clienttoken, NULL, handle_clienttoken, },
+    { SP_SEQ_TRACK_OPEN, "LOGIN5", SP_PROTO_HTTP, msg_make_login5, NULL, handle_login5, },
     { SP_SEQ_TRACK_OPEN, "MERCURY_TRACK_GET", SP_PROTO_TCP, msg_make_mercury_track_get, prepare_tcp, handle_tcp_generic, },
     { SP_SEQ_TRACK_OPEN, "AUDIO_KEY_GET", SP_PROTO_TCP, msg_make_audio_key_get, prepare_tcp, handle_tcp_generic, },
-    { SP_SEQ_TRACK_OPEN, "STORAGE_RESOLVE", SP_PROTO_HTTP, msg_make_storage_resolve_track, prepare_http_auth, handle_storage_resolve, },
+    { SP_SEQ_TRACK_OPEN, "STORAGE_RESOLVE", SP_PROTO_HTTP, msg_make_storage_resolve_track, NULL, handle_storage_resolve, },
     { SP_SEQ_TRACK_OPEN, "FIRST_CHUNK", SP_PROTO_HTTP, msg_make_media_get, NULL, handle_media_get, },
   },
   {
+// TODO
     { SP_SEQ_EPISODE_OPEN, "MERCURY_EPISODE_GET", SP_PROTO_TCP, msg_make_mercury_episode_get, prepare_tcp, handle_tcp_generic, },
     { SP_SEQ_EPISODE_OPEN, "AUDIO_KEY_GET", SP_PROTO_TCP, msg_make_audio_key_get, prepare_tcp, handle_tcp_generic, },
   },
@@ -1822,6 +1843,21 @@ struct sp_seq_request *
 seq_request_get(enum sp_seq_type seq_type, int n)
 {
   return &seq_requests[seq_type][n];
+}
+
+// This is just a wrapper to help debug if we are unintentionally overwriting
+// a queued sequence
+void
+seq_next_set(struct sp_session *session, enum sp_seq_type seq_type)
+{
+  bool will_overwrite = (seq_type != SP_SEQ_STOP && session->next_seq != SP_SEQ_STOP && seq_type != session->next_seq);
+
+  if (will_overwrite)
+    sp_cb.logmsg("Bug! Sequence is being overwritten (prev %d, new %d)", session->next_seq, seq_type);
+
+  assert(!will_overwrite);
+
+  session->next_seq = seq_type;
 }
 
 enum sp_error
@@ -1902,7 +1938,7 @@ msg_tcp_send(struct sp_tcp_message *tmsg, struct sp_connection *conn)
 }
 
 enum sp_error
-msg_http_send(struct http_response *hres, struct http_request *hreq)
+msg_http_send(struct http_response *hres, struct http_request *hreq, struct http_session *hses)
 {
   int ret;
 
@@ -1910,7 +1946,7 @@ msg_http_send(struct http_response *hres, struct http_request *hreq)
 
   sp_cb.logmsg("Making http request to %s\n", hreq->url);
 
-  ret = http_request(hres, hreq, NULL);
+  ret = http_request(hres, hreq, hses);
   if (ret < 0)
     RETURN_ERROR(SP_ERR_NOCONNECTION, "No connection to Spotify for http request");
 

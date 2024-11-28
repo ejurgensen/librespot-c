@@ -25,17 +25,14 @@ HTTP_PROTO_SRC = \
 	src/proto/storage_resolve.pb-c.h src/proto/storage_resolve.pb-c.c
 
 CORE_SRC = \
-	src/librespot-c.c src/connection.c src/channel.c src/crypto.c src/commands.c
-
-HTTP_SRC = \
-        src/dl.c src/http.c
+	src/librespot-c.c src/connection.c src/channel.c src/crypto.c src/commands.c \
+	src/http.c
 
 librespot_c_a_SOURCES =  \
 	$(CORE_SRC)      \
 	$(SHANNON_SRC)   \
 	$(PROTO_SRC)     \
-	$(HTTP_PROTO_SRC) \
-	$(HTTP_SRC)
+	$(HTTP_PROTO_SRC)
 
 noinst_HEADERS =	 \
 	librespot-c.h src/librespot-c-internal.h src/connection.h \

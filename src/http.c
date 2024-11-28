@@ -15,21 +15,16 @@
 // Number of seconds the client will wait for a response before aborting
 #define HTTP_CLIENT_TIMEOUT 8
 
-struct http_session
-{
-  CURL *curl;
-};
-
 void
 http_session_init(struct http_session *session)
 {
-  session->curl = curl_easy_init();
+  session->internal = curl_easy_init();
 }
 
 void
 http_session_deinit(struct http_session *session)
 {
-  curl_easy_cleanup(session->curl);
+  curl_easy_cleanup(session->internal);
 }
 
 void
@@ -158,7 +153,7 @@ http_request(struct http_response *response, struct http_request *request, struc
 
   if (session)
     {
-      curl = session->curl;
+      curl = session->internal;
       curl_easy_reset(curl);
     }
   else

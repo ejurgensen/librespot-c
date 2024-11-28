@@ -13,6 +13,9 @@ seq_requests_check(void);
 struct sp_seq_request *
 seq_request_get(enum sp_seq_type seq_type, int n);
 
+void
+seq_next_set(struct sp_session *session, enum sp_seq_type seq_type);
+
 enum sp_error
 seq_request_prepare(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct sp_session *session);
 
@@ -32,7 +35,7 @@ enum sp_error
 msg_tcp_send(struct sp_tcp_message *tmsg, struct sp_connection *conn);
 
 enum sp_error
-msg_http_send(struct http_response *hres, struct http_request *hreq);
+msg_http_send(struct http_response *hres, struct http_request *hreq, struct http_session *hses);
 
 int
 msg_pong(struct sp_session *session);

@@ -71,13 +71,14 @@
 // Download in chunks of 32768 bytes. The chunks shouldn't be too large because
 // it makes seeking slow (seeking involves jumping around in the file), but
 // large enough that the file can be probed from the first chunk.
+// For comparison, Spotify for Windows seems to request 7300 byte chunks.
 #define SP_CHUNK_LEN_WORDS 1024 * 8
 
 // Used to create default sysinfo, which should be librespot_[short sha]_[random 8 characters build id],
 // ref https://github.com/plietar/librespot/pull/218. User may override, but
 // as of 20220516 Spotify seems to have whitelisting of client name.
 #define SP_CLIENT_NAME_DEFAULT "librespot"
-#define SP_CLIENT_VERSION_DEFAULT "000000"
+#define SP_CLIENT_VERSION_DEFAULT "0.0.0"
 #define SP_CLIENT_BUILD_ID_DEFAULT "aabbccdd"
 
 // ClientIdHex from client_id.go
@@ -272,6 +273,7 @@ struct sp_token
   char value[512]; // base64 string, actual size 360 bytes
   int32_t expires_after_seconds;
   int32_t refresh_after_seconds;
+  time_t received_ts;
 };
 
 struct sp_mercury
@@ -374,7 +376,7 @@ struct sp_session
   struct sp_connection conn;
   time_t cooldown_ts;
 
-  bool use_http_proto;
+  struct http_session http_session;
   struct sp_token http_clienttoken;
   struct sp_token http_accesstoken;
 

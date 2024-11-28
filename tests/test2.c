@@ -193,8 +193,7 @@ main(int argc, char * argv[])
       goto error;
     }
 
-  snprintf(sysinfo.device_id, sizeof(sysinfo.device_id), "622682995d5c1db29722de8dd85f6c3acd6fc591");
-  snprintf(sysinfo.client_version, sizeof(sysinfo.client_version), "0.0.0");
+  snprintf(sysinfo.device_id, sizeof(sysinfo.device_id), "622682995d5c1db29722de8dd85f6c3acd6fc592");
 
   ret = librespotc_init(&sysinfo, &callbacks);
   if (ret < 0)

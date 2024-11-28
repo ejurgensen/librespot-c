@@ -96,6 +96,8 @@ session_free(struct sp_session *session)
 
   event_free(session->continue_ev);
 
+  http_session_deinit(&session->http_session);
+
   free(session);
 }
 
@@ -130,6 +132,8 @@ session_new(struct sp_session **out, struct sp_cmdargs *cmdargs, event_callback_
   session = calloc(1, sizeof(struct sp_session));
   if (!session)
     RETURN_ERROR(SP_ERR_OOM, "Out of memory creating session");
+
+  http_session_init(&session->http_session);
 
   session->continue_ev = evtimer_new(sp_evbase, cb, session);
   if (!session->continue_ev)
@@ -312,7 +316,7 @@ audio_data_received(struct sp_session *session)
   struct sp_channel *channel = session->now_streaming_channel;
 
   if (channel->state == SP_CHANNEL_STATE_PLAYING && !channel->file.end_of_file)
-    session->next_seq = SP_SEQ_MEDIA_GET;
+    seq_next_set(session, SP_SEQ_MEDIA_GET);
   if (channel->progress_cb)
     channel->progress_cb(channel->audio_fd[0], channel->cb_arg, 4 * channel->file.received_words - SP_OGG_HEADER_LEN, 4 * channel->file.len_words - SP_OGG_HEADER_LEN);
 
@@ -422,7 +426,9 @@ msg_send(struct sp_message *msg, struct sp_session *session)
     {
       res.type = SP_MSG_TYPE_HTTP_RES;
 
-      ret = msg_http_send(&res.payload.hres, &msg->payload.hreq);
+      // Using http_session ensures that Curl will use keepalive and doesn't
+      // need to reconnect with every request
+      ret = msg_http_send(&res.payload.hres, &msg->payload.hreq, &session->http_session);
       if (ret < 0)
         RETURN_ERROR(ret, sp_errmsg);
 
@@ -459,9 +465,10 @@ sequence_continue(struct sp_session *session)
   // Checks if the dependencies for making the request are met - e.g. do we have
   // a connection and a valid token. If not, tries to satisfy them.
   ret = seq_request_prepare(session->request, &cb, session);
-  if (ret < 0)
+  if (ret == SP_OK_WAIT)
+    sp_cb.logmsg("Sequence queued, first making request '%s'\n", session->request->name);
+  else if (ret < 0)
     RETURN_ERROR(ret, sp_errmsg);
-//TODO start a new sequence, e.g. GET_TOKEN? -> SP_OK_WAIT?
 //TODO noconnection -> AP_RESOLVE
 
   ret = msg_make(&msg, session->request, session);
@@ -498,7 +505,7 @@ sequence_continue_cb(int fd, short what, void *arg)
   if (!session->request || !session->request->name)
     {
       session->request = seq_request_get(session->next_seq, 0);
-      session->next_seq = SP_SEQ_STOP;
+      seq_next_set(session, SP_SEQ_STOP);
     }
 
   if (session->request && session->request->name)
@@ -512,7 +519,7 @@ static void
 sequence_start(enum sp_seq_type seq_type, struct sp_session *session)
 {
   session->request = NULL;
-  session->next_seq = seq_type;
+  seq_next_set(session, seq_type);
 
   event_active(session->continue_ev, 0, 0);
 }
@@ -580,7 +587,7 @@ track_pause(void *arg, int *retval)
     }
 
   channel_pause(channel);
-  session->next_seq = SP_SEQ_STOP; // TODO test if this will work
+  seq_next_set(session, SP_SEQ_STOP); // TODO test if this will work
 
   *retval = 1;
   return COMMAND_PENDING;

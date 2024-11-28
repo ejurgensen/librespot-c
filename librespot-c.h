@@ -111,7 +111,4 @@ librespotc_init(struct sp_sysinfo *sysinfo, struct sp_callbacks *callbacks);
 void
 librespotc_deinit(void);
 
-int
-librespot_http_test(const char *username, uint8_t *stored_cred, size_t stored_cred_len);
-
 #endif /* !__LIBRESPOT_C_H__ */
