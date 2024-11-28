@@ -1028,7 +1028,6 @@ handle_storage_resolve(struct sp_message *msg, struct sp_session *session)
   return ret;
 }
 
-// TODO also save the byte size and allow non word-aligned sizes
 static int
 file_size_get(struct sp_channel *channel, struct http_response *hres)
 {
@@ -1041,10 +1040,10 @@ file_size_get(struct sp_channel *channel, struct http_response *hres)
     return -1;
 
   sz = atoi(colon + 1);
-  if (sz <= 0 || sz % 4 != 0)
+  if (sz <= 0)
     return -1;
 
-  channel->file.len_words = sz / 4;
+  channel->file.len_bytes = sz;
   return 0;
 }
 
@@ -1060,10 +1059,10 @@ handle_media_get(struct sp_message *msg, struct sp_session *session)
   if (hres->code != HTTP_PARTIALCONTENT)
     RETURN_ERROR(SP_ERR_NOCONNECTION, "Request for Spotify media returned an error");
 
-  if (channel->file.len_words == 0 && file_size_get(channel, hres) < 0)
+  if (channel->file.len_bytes == 0 && file_size_get(channel, hres) < 0)
     RETURN_ERROR(SP_ERR_INVALID, "Invalid content-range, can't determine media size");
 
-  sp_cb.logmsg("Received %zu bytes, size is %d\n", hres->body_len, channel->file.len_words * 4);
+  sp_cb.logmsg("Received %zu bytes, size is %d\n", hres->body_len, channel->file.len_bytes);
 
   // Not sure if the channel concept even makes sense for http, but nonetheless
   // we use it to stay consistent with the old tcp protocol
@@ -1636,11 +1635,11 @@ msg_make_chunk_request(struct sp_message *msg, struct sp_session *session)
   memcpy(ptr, channel->file.id, sizeof(channel->file.id));
   ptr += sizeof(channel->file.id);
 
-  be32 = htobe32(channel->file.offset_words);
+  be32 = htobe32(channel->file.offset_bytes / 4);
   memcpy(ptr, &be32, sizeof(be32));
   ptr += sizeof(be32); // x4
 
-  be32 = htobe32(channel->file.offset_words + SP_CHUNK_LEN_WORDS);
+  be32 = htobe32(channel->file.offset_bytes / 4 + SP_CHUNK_LEN / 4);
   memcpy(ptr, &be32, sizeof(be32));
   ptr += sizeof(be32); // x5
 
@@ -1791,9 +1790,9 @@ msg_make_metadata_get(struct sp_message *msg, struct sp_session *session)
   char *ptr;
   int i;
 
-  if (channel->file.media_type = SP_MEDIA_TRACK)
+  if (channel->file.media_type == SP_MEDIA_TRACK)
     path = "metadata/4/track";
-  else if (channel->file.media_type = SP_MEDIA_EPISODE)
+  else if (channel->file.media_type == SP_MEDIA_EPISODE)
     path = "metadata/4/episode";
   else
     return -1;
@@ -1846,12 +1845,12 @@ msg_make_media_get(struct sp_message *msg, struct sp_session *session)
   size_t bytes_from;
   size_t bytes_to;
 
-  bytes_from = 4 * channel->file.offset_words;
+  bytes_from = channel->file.offset_bytes;
 
-  if (!channel->file.len_words || channel->file.len_words > channel->file.offset_words + SP_CHUNK_LEN_WORDS)
-    bytes_to = 4 * (channel->file.offset_words + SP_CHUNK_LEN_WORDS) - 1;
+  if (!channel->file.len_bytes || channel->file.len_bytes > channel->file.offset_bytes + SP_CHUNK_LEN)
+    bytes_to = channel->file.offset_bytes + SP_CHUNK_LEN - 1;
   else
-    bytes_to = 4 * channel->file.len_words - 1;
+    bytes_to = channel->file.len_bytes - 1;
 
   hreq->url = strdup(channel->file.cdnurl[0]);
 

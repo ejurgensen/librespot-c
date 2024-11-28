@@ -318,7 +318,7 @@ audio_data_received(struct sp_session *session)
   if (channel->state == SP_CHANNEL_STATE_PLAYING && !channel->file.end_of_file)
     seq_next_set(session, SP_SEQ_MEDIA_GET);
   if (channel->progress_cb)
-    channel->progress_cb(channel->audio_fd[0], channel->cb_arg, 4 * channel->file.received_words - SP_OGG_HEADER_LEN, 4 * channel->file.len_words - SP_OGG_HEADER_LEN);
+    channel->progress_cb(channel->audio_fd[0], channel->cb_arg, channel->file.received_bytes - SP_OGG_HEADER_LEN, channel->file.len_bytes - SP_OGG_HEADER_LEN);
 
   event_add(channel->audio_write_ev, NULL);
 }
@@ -774,7 +774,7 @@ metadata_get(void *arg, int *retval)
     RETURN_ERROR(SP_ERR_NOSESSION, "Session has disappeared, cannot get metadata");
 
   memset(metadata, 0, sizeof(struct sp_metadata));
-  metadata->file_len = 4 * session->now_streaming_channel->file.len_words - SP_OGG_HEADER_LEN;;
+  metadata->file_len = session->now_streaming_channel->file.len_bytes - SP_OGG_HEADER_LEN;;
 
  error:
   *retval = ret;

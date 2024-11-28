@@ -72,7 +72,7 @@
 // it makes seeking slow (seeking involves jumping around in the file), but
 // large enough that the file can be probed from the first chunk.
 // For comparison, Spotify for Windows seems to request 7300 byte chunks.
-#define SP_CHUNK_LEN_WORDS 1024 * 8
+#define SP_CHUNK_LEN 32768
 
 // Used to create default sysinfo, which should be librespot_[short sha]_[random 8 characters build id],
 // ref https://github.com/plietar/librespot/pull/218. User may override, but
@@ -309,9 +309,9 @@ struct sp_file
   uint16_t channel_id;
 
   // Length and download progress
-  size_t len_words; // Length of file in words (32 bit)
-  size_t offset_words;
-  size_t received_words;
+  size_t len_bytes;
+  size_t offset_bytes;
+  size_t received_bytes;
   bool end_of_file;
   bool end_of_chunk;
   bool open;

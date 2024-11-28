@@ -213,7 +213,8 @@ channel_seek_internal(struct sp_channel *channel, size_t pos, bool do_flush)
   channel->seek_pos = pos;
 
   // If seek + header isn't word aligned we will get up to 3 bytes before the
-  // actual seek position. We will remove those when they are received.
+  // actual seek position with the legacy protocol. We will remove those when
+  // they are received.
   channel->seek_align = (pos + SP_OGG_HEADER_LEN) % 4;
 
   seek_words = (pos + SP_OGG_HEADER_LEN) / 4;
@@ -223,8 +224,8 @@ channel_seek_internal(struct sp_channel *channel, size_t pos, bool do_flush)
     RETURN_ERROR(SP_ERR_DECRYPTION, sp_errmsg);
 
   // Set the offset and received counter to match the seek
-  channel->file.offset_words = seek_words;
-  channel->file.received_words = seek_words;
+  channel->file.offset_bytes = 4 * seek_words;
+  channel->file.received_bytes = 4 * seek_words;
 
   return 0;
 
@@ -261,7 +262,7 @@ channel_retry(struct sp_channel *channel)
   memset(&channel->header, 0, sizeof(struct sp_channel_header));
   memset(&channel->body, 0, sizeof(struct sp_channel_body));
 
-  pos = 4 * channel->file.received_words - SP_OGG_HEADER_LEN;
+  pos = channel->file.received_bytes - SP_OGG_HEADER_LEN;
 
   channel_seek_internal(channel, pos, false); // false => don't flush
 }
@@ -321,7 +322,7 @@ channel_header_handle(struct sp_channel *channel, struct sp_channel_header *head
 	}
 
       memcpy(&be32, header->data, sizeof(be32));
-      channel->file.len_words = be32toh(be32);
+      channel->file.len_bytes = 4 * be32toh(be32);
     }
 }
 
@@ -338,10 +339,10 @@ channel_header_trailer_read(struct sp_channel *channel, uint8_t *msg, size_t msg
   if (msg_len == 0)
     {
       channel->file.end_of_chunk = true;
-      channel->file.end_of_file = (channel->file.received_words >= channel->file.len_words);
+      channel->file.end_of_file = (channel->file.received_bytes >= channel->file.len_bytes);
 
       // In preparation for next chunk
-      channel->file.offset_words += SP_CHUNK_LEN_WORDS;
+      channel->file.offset_bytes += SP_CHUNK_LEN;
       channel->is_data_mode = false;
 
       return 0;
@@ -380,9 +381,7 @@ channel_data_read(struct sp_channel *channel, uint8_t *msg, size_t msg_len)
   const char *errmsg;
   int ret;
 
-  assert (msg_len % 4 == 0);
-
-  channel->file.received_words += msg_len / 4;
+  channel->file.received_bytes += msg_len;
 
   ret = crypto_aes_decrypt(msg, msg_len, &channel->file.decrypt, &errmsg);
   if (ret < 0)
@@ -502,8 +501,8 @@ channel_http_body_read(struct sp_channel *channel, uint8_t *body, size_t body_le
     goto error;
 
   channel->file.end_of_chunk = true;
-  channel->file.end_of_file = (channel->file.received_words >= channel->file.len_words);
-  channel->file.offset_words += SP_CHUNK_LEN_WORDS;
+  channel->file.end_of_file = (channel->file.received_bytes >= channel->file.len_bytes);
+  channel->file.offset_bytes += SP_CHUNK_LEN;
   return 0;
 
  error:
