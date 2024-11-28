@@ -678,12 +678,7 @@ media_open(void *arg, int *retval)
 
   // Kicks of a sequence where we first get file info, then get the AES key and
   // then the first chunk (incl. headers)
-  if (channel->file.media_type == SP_MEDIA_TRACK)
-    sequence_start(SP_SEQ_TRACK_OPEN, session);
-  else if (channel->file.media_type == SP_MEDIA_EPISODE)
-    sequence_start(SP_SEQ_EPISODE_OPEN, session);
-  else
-    RETURN_ERROR(SP_ERR_INVALID, "Unknown media type in Spotify path");
+  sequence_start(SP_SEQ_MEDIA_OPEN, session);
 
   *retval = 1;
   return COMMAND_PENDING;

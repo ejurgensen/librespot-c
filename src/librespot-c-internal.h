@@ -116,9 +116,7 @@ enum sp_seq_type
 {
   SP_SEQ_STOP = 0,
   SP_SEQ_LOGIN,
-  SP_SEQ_TRACK_OPEN,
-  SP_SEQ_EPISODE_OPEN,
-  SP_SEQ_MEDIA_GET_TCP, // Old protocol
+  SP_SEQ_MEDIA_OPEN,
   SP_SEQ_MEDIA_GET,
   SP_SEQ_PONG,
 };

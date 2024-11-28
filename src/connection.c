@@ -965,6 +965,34 @@ handle_login5(struct sp_message *msg, struct sp_session *session)
 }
 
 static enum sp_error
+handle_metadata_get(struct sp_message *msg, struct sp_session *session)
+{
+  struct http_response *hres = &msg->payload.hres;
+  struct sp_channel *channel = session->now_streaming_channel;
+  Track *response = NULL;
+  int ret;
+
+  if (hres->code != HTTP_OK)
+    RETURN_ERROR(SP_ERR_INVALID, "Request for metadata returned an error");
+
+  // FIXME Use Episode object for file.media_type == SP_MEDIA_EPISODE
+  response = track__unpack(NULL, hres->body_len, hres->body);
+  if (!response)
+    RETURN_ERROR(SP_ERR_INVALID, "Could not parse metadata response");
+
+  ret = file_select(channel->file.id, sizeof(channel->file.id), response, session->bitrate_preferred);
+  if (ret < 0)
+    RETURN_ERROR(SP_ERR_INVALID, "Could not find track data");
+
+  track__free_unpacked(response, NULL);
+  return SP_OK_DONE;
+
+ error:
+  track__free_unpacked(response, NULL);
+  return ret;
+}
+
+static enum sp_error
 handle_storage_resolve(struct sp_message *msg, struct sp_session *session)
 {
   struct http_response *hres = &msg->payload.hres;
@@ -1518,6 +1546,19 @@ msg_make_mercury_episode_get(struct sp_message *msg, struct sp_session *session)
 }
 
 static int
+msg_make_mercury_metadata_get(struct sp_message *msg, struct sp_session *session)
+{
+  struct sp_channel *channel = session->now_streaming_channel;
+
+  if (channel->file.media_type == SP_MEDIA_TRACK)
+    return msg_make_mercury_track_get(msg, session);
+  else if (channel->file.media_type == SP_MEDIA_EPISODE)
+    return msg_make_mercury_episode_get(msg, session);
+
+  return -1;
+}
+
+static int
 msg_make_audio_key_get(struct sp_message *msg, struct sp_session *session)
 {
   struct sp_tcp_message *tmsg = &msg->payload.tmsg;
@@ -1738,10 +1779,43 @@ msg_make_login5(struct sp_message *msg, struct sp_session *session)
   return 0;
 }
 
+// Ref. spclient/spclient.go
+static int
+msg_make_metadata_get(struct sp_message *msg, struct sp_session *session)
+{
+  struct http_request *hreq = &msg->payload.hreq;
+  struct sp_server *server = &session->spclient;
+  struct sp_channel *channel = session->now_streaming_channel;
+  const char *path;
+  char *media_id = NULL;
+  char *ptr;
+  int i;
+
+  if (channel->file.media_type = SP_MEDIA_TRACK)
+    path = "metadata/4/track";
+  else if (channel->file.media_type = SP_MEDIA_EPISODE)
+    path = "metadata/4/episode";
+  else
+    return -1;
+
+  media_id = malloc(2 * sizeof(channel->file.media_id) + 1);
+  for (i = 0, ptr = media_id; i < sizeof(channel->file.media_id); i++)
+    ptr += sprintf(ptr, "%02x", channel->file.media_id[i]);
+
+  hreq->url = asprintf_or_die("https://%s:%d/%s/%s", server->address, server->port, path, media_id);
+
+  hreq->headers[0] = asprintf_or_die("Accept: application/x-protobuf");
+  hreq->headers[1] = asprintf_or_die("Client-Token: %s", session->http_clienttoken.value);
+  hreq->headers[2] = asprintf_or_die("Authorization: Bearer %s", session->http_accesstoken.value);
+
+  free(media_id);
+  return 0;
+}
+
 // Resolve storage, this will just be a GET request
 // Ref. spclient/spclient.go
 static int
-msg_make_storage_resolve_track(struct sp_message *msg, struct sp_session *session)
+msg_make_storage_resolve(struct sp_message *msg, struct sp_session *session)
 {
   struct http_request *hreq = &msg->payload.hreq;
   struct sp_server *server = &session->spclient;
@@ -1804,23 +1878,41 @@ static struct sp_seq_request seq_requests[][7] =
   },
   {
     // The first two will be skipped if valid tokens already exist
-    { SP_SEQ_TRACK_OPEN, "CLIENTTOKEN", SP_PROTO_HTTP, msg_make_clienttoken, NULL, handle_clienttoken, },
-    { SP_SEQ_TRACK_OPEN, "LOGIN5", SP_PROTO_HTTP, msg_make_login5, NULL, handle_login5, },
-    { SP_SEQ_TRACK_OPEN, "MERCURY_TRACK_GET", SP_PROTO_TCP, msg_make_mercury_track_get, prepare_tcp, handle_tcp_generic, },
-    { SP_SEQ_TRACK_OPEN, "AUDIO_KEY_GET", SP_PROTO_TCP, msg_make_audio_key_get, prepare_tcp, handle_tcp_generic, },
-    { SP_SEQ_TRACK_OPEN, "STORAGE_RESOLVE", SP_PROTO_HTTP, msg_make_storage_resolve_track, NULL, handle_storage_resolve, },
-    { SP_SEQ_TRACK_OPEN, "FIRST_CHUNK", SP_PROTO_HTTP, msg_make_media_get, NULL, handle_media_get, },
-  },
-  {
-// TODO
-    { SP_SEQ_EPISODE_OPEN, "MERCURY_EPISODE_GET", SP_PROTO_TCP, msg_make_mercury_episode_get, prepare_tcp, handle_tcp_generic, },
-    { SP_SEQ_EPISODE_OPEN, "AUDIO_KEY_GET", SP_PROTO_TCP, msg_make_audio_key_get, prepare_tcp, handle_tcp_generic, },
-  },
-  {
-    { SP_SEQ_MEDIA_GET_TCP, "CHUNK_REQUEST", SP_PROTO_TCP, msg_make_chunk_request, prepare_tcp, handle_tcp_generic, },
+    { SP_SEQ_MEDIA_OPEN, "CLIENTTOKEN", SP_PROTO_HTTP, msg_make_clienttoken, NULL, handle_clienttoken, },
+    { SP_SEQ_MEDIA_OPEN, "LOGIN5", SP_PROTO_HTTP, msg_make_login5, NULL, handle_login5, },
+    { SP_SEQ_MEDIA_OPEN, "METADATA_GET", SP_PROTO_HTTP, msg_make_metadata_get, NULL, handle_metadata_get, },
+    { SP_SEQ_MEDIA_OPEN, "AUDIO_KEY_GET", SP_PROTO_TCP, msg_make_audio_key_get, prepare_tcp, handle_tcp_generic, },
+    { SP_SEQ_MEDIA_OPEN, "STORAGE_RESOLVE", SP_PROTO_HTTP, msg_make_storage_resolve, NULL, handle_storage_resolve, },
+    { SP_SEQ_MEDIA_OPEN, "MEDIA_PREFETCH", SP_PROTO_HTTP, msg_make_media_get, NULL, handle_media_get, },
   },
   {
     { SP_SEQ_MEDIA_GET, "MEDIA_GET", SP_PROTO_HTTP, msg_make_media_get, NULL, handle_media_get, },
+  },
+  {
+    { SP_SEQ_PONG, "PONG", SP_PROTO_TCP, msg_make_pong, prepare_tcp, NULL, },
+  },
+};
+
+// Must be large enough to also include null terminating elements
+static struct sp_seq_request seq_requests_legacy[][7] =
+{
+  {
+    // Just a dummy so that the array is aligned with the enum
+    { SP_SEQ_STOP },
+  },
+  {
+    { SP_SEQ_LOGIN, "AP_RESOLVE", SP_PROTO_HTTP, msg_make_ap_resolve, NULL, handle_ap_resolve, },
+    { SP_SEQ_LOGIN, "CLIENT_HELLO", SP_PROTO_TCP, msg_make_client_hello, prepare_tcp_handshake, handle_client_hello, },
+    { SP_SEQ_LOGIN, "CLIENT_RESPONSE_PLAINTEXT", SP_PROTO_TCP, msg_make_client_response_plaintext, prepare_tcp_handshake, NULL, },
+    { SP_SEQ_LOGIN, "CLIENT_RESPONSE_ENCRYPTED", SP_PROTO_TCP,  msg_make_client_response_encrypted, prepare_tcp_handshake, handle_tcp_generic, },
+  },
+  {
+    { SP_SEQ_MEDIA_OPEN, "MERCURY_METADATA_GET", SP_PROTO_TCP, msg_make_mercury_metadata_get, prepare_tcp, handle_tcp_generic, },
+    { SP_SEQ_MEDIA_OPEN, "AUDIO_KEY_GET", SP_PROTO_TCP, msg_make_audio_key_get, prepare_tcp, handle_tcp_generic, },
+    { SP_SEQ_MEDIA_OPEN, "CHUNK_PREFETCH", SP_PROTO_TCP, msg_make_chunk_request, prepare_tcp, handle_tcp_generic, },
+  },
+  {
+    { SP_SEQ_MEDIA_GET, "CHUNK_REQUEST", SP_PROTO_TCP, msg_make_chunk_request, prepare_tcp, handle_tcp_generic, },
   },
   {
     { SP_SEQ_PONG, "PONG", SP_PROTO_TCP, msg_make_pong, prepare_tcp, NULL, },
