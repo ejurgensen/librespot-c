@@ -252,7 +252,6 @@ static void
 session_retry(struct sp_session *session)
 {
   struct sp_channel *channel = session->now_streaming_channel;
-  int ret;
 
   sp_cb.logmsg("Retrying after disconnect\n");
 
@@ -504,7 +503,7 @@ sequence_continue_cb(int fd, short what, void *arg)
   // Starting a sequence, or ending one and should possibly start the next
   if (!session->request || !session->request->name)
     {
-      session->request = seq_request_get(session->next_seq, 0);
+      session->request = seq_request_get(session->next_seq, 0, session->use_legacy);
       seq_next_set(session, SP_SEQ_STOP);
     }
 

@@ -66,31 +66,6 @@ http_response_free(struct http_response *response, bool only_content)
     free(response);
 }
 
-static size_t
-header_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
-{
-  struct http_response *response = userdata;
-  uint8_t *new;
-  int i;
-
-  if (size * nmemb == 0 || size != 1)
-    return 0;
-
-  new = calloc(nmemb + 1, 1); // Extra byte for null termination
-  if (!new)
-    return 0;
-
-  memcpy(new, ptr, nmemb);
-  for (i = 0; i < HTTP_MAX_HEADERS && response->headers[i]; i++)
-    ; // Find next free spot in the array
-  if (i != HTTP_MAX_HEADERS)
-    response->headers[i] = new;
-  else
-    free(new); // Just discard headers if more than HTTP_MAX_HEADERS
-
-  return nmemb;
-}
-
 static void
 headers_save(struct http_response *response, CURL *curl)
 {

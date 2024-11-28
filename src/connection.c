@@ -570,7 +570,7 @@ prepare_tcp(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct
     {
       // Queue the current request
       seq_next_set(session, request->seq_type);
-      session->request = seq_request_get(SP_SEQ_LOGIN, 0);
+      session->request = seq_request_get(SP_SEQ_LOGIN, 0, session->use_legacy);
       return SP_OK_WAIT;
     }
 
@@ -648,7 +648,7 @@ handle_ap_resolve(struct sp_message *msg, struct sp_session *session)
   if (hres->code != HTTP_OK)
     RETURN_ERROR(SP_ERR_NOCONNECTION, "AP resolver returned an error");
 
-  jresponse = json_tokener_parse(hres->body);
+  jresponse = json_tokener_parse((char *)hres->body);
   if (!jresponse)
     RETURN_ERROR(SP_ERR_NOCONNECTION, "Could not parse reply from access point resolver");
 
@@ -954,6 +954,8 @@ handle_login5(struct sp_message *msg, struct sp_session *session)
 	break;
       case SPOTIFY__LOGIN5__V3__LOGIN_RESPONSE__RESPONSE_ERROR:
 	RETURN_ERROR(SP_ERR_LOGINFAILED, err2txt(response->error, sp_login5_error_map, ARRAY_SIZE(sp_login5_error_map)));
+      default:
+	RETURN_ERROR(SP_ERR_LOGINFAILED, "Login5 failed with unknown error type");
     }
 
   spotify__login5__v3__login_response__free_unpacked(response, NULL);
@@ -1018,6 +1020,8 @@ handle_storage_resolve(struct sp_message *msg, struct sp_session *session)
         RETURN_ERROR(SP_ERR_INVALID, "Track not available via CDN storage");
       case SPOTIFY__DOWNLOAD__PROTO__STORAGE_RESOLVE_RESPONSE__RESULT__RESTRICTED:
         RETURN_ERROR(SP_ERR_INVALID, "Can't resolve storage, track access restricted");
+      default:
+        RETURN_ERROR(SP_ERR_INVALID, "Can't resolve storage, unknown error");
     }
 
   spotify__download__proto__storage_resolve_response__free_unpacked(response, NULL);
@@ -1053,7 +1057,6 @@ handle_media_get(struct sp_message *msg, struct sp_session *session)
 {
   struct http_response *hres = &msg->payload.hres;
   struct sp_channel *channel = session->now_streaming_channel;
-  const char *errmsg;
   int ret;
 
   if (hres->code != HTTP_PARTIALCONTENT)
@@ -1689,7 +1692,7 @@ msg_make_clienttoken(struct sp_message *msg, struct sp_session *session)
   struct utsname uts = { 0 };
 
   uname(&uts);
-  if (uts.sysname && strcmp(uts.sysname, "Linux") == 0)
+  if (strcmp(uts.sysname, "Linux") == 0)
     {
       desktop_linux.system_name = uts.sysname;
       desktop_linux.system_release = uts.release;
@@ -1698,7 +1701,7 @@ msg_make_clienttoken(struct sp_message *msg, struct sp_session *session)
       platform_data.desktop_linux = &desktop_linux;
       platform_data.data_case = SPOTIFY__CLIENTTOKEN__DATA__V0__PLATFORM_SPECIFIC_DATA__DATA_DESKTOP_LINUX;
     }
-  else if (uts.sysname && strcmp(uts.sysname, "Darwin") == 0)
+  else if (strcmp(uts.sysname, "Darwin") == 0)
     {
       desktop_macos.system_version = uts.version;
       desktop_macos.hw_model = uts.machine;
@@ -1926,13 +1929,21 @@ seq_requests_check(void)
       if (i != seq_requests[i]->seq_type)
 	return -1;
     }
+  for (int i = 0; i < ARRAY_SIZE(seq_requests_legacy); i++)
+    {
+      if (i != seq_requests_legacy[i]->seq_type)
+	return -1;
+    }
 
   return 0;
 }
 
 struct sp_seq_request *
-seq_request_get(enum sp_seq_type seq_type, int n)
+seq_request_get(enum sp_seq_type seq_type, int n, bool use_legacy)
 {
+  if (use_legacy)
+    return &seq_requests_legacy[seq_type][n];
+
   return &seq_requests[seq_type][n];
 }
 
@@ -2054,7 +2065,7 @@ msg_pong(struct sp_session *session)
   struct sp_message msg = { 0 };
   int ret;
 
-  req = seq_request_get(SP_SEQ_PONG, 0);
+  req = seq_request_get(SP_SEQ_PONG, 0, session->use_legacy);
 
   ret = msg_make(&msg, req, session);
   if (ret < 0)

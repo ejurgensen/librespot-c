@@ -213,7 +213,7 @@ struct sp_tcp_message
   bool encrypt;
   bool add_version_header;
 
-  ssize_t len;
+  size_t len;
   uint8_t *data;
 };
 
@@ -373,6 +373,9 @@ struct sp_session
 
   struct sp_connection conn;
   time_t cooldown_ts;
+
+  // Use legacy protocol (non http, see seq_requests_legacy)
+  bool use_legacy;
 
   struct http_session http_session;
   struct sp_token http_clienttoken;
