@@ -47,6 +47,12 @@ events for proceeding are activated directly.
 "timeout": receive or write took too long to complete
 */
 
+// TODO
+// - update comments
+// - try different server if connection refused
+// - Valgrind
+// - Handle connection error -> ap_resolve
+
 #include <pthread.h>
 #include <assert.h>
 
@@ -468,7 +474,6 @@ sequence_continue(struct sp_session *session)
     sp_cb.logmsg("Sequence queued, first making request '%s'\n", session->request->name);
   else if (ret < 0)
     RETURN_ERROR(ret, sp_errmsg);
-//TODO noconnection -> AP_RESOLVE
 
   ret = msg_make(&msg, session->request, session);
   if (ret > 0)
@@ -761,6 +766,27 @@ logout(void *arg, int *retval)
 }
 
 static enum command_state
+legacy_set(void *arg, int *retval)
+{
+  struct sp_cmdargs *cmdargs = arg;
+  struct sp_session *session = cmdargs->session;
+  int ret;
+
+  ret = session_check(session);
+  if (ret < 0)
+    RETURN_ERROR(SP_ERR_NOSESSION, "Session has disappeared, cannot set legacy mode");
+
+  if (session->request && session->request->name)
+    RETURN_ERROR(SP_ERR_INVALID, "Can't switch mode while session is active");
+
+  session->use_legacy = cmdargs->use_legacy;
+
+ error:
+  *retval = ret;
+  return COMMAND_END;
+}
+
+static enum command_state
 metadata_get(void *arg, int *retval)
 {
   struct sp_cmdargs *cmdargs = arg;
@@ -931,6 +957,17 @@ librespotc_logout(struct sp_session *session)
   cmdargs.session         = session;
 
   return commands_exec_sync(sp_cmdbase, logout, NULL, &cmdargs);
+}
+
+int
+librespotc_legacy_set(struct sp_session *session, int use_legacy)
+{
+  struct sp_cmdargs cmdargs = { 0 };
+
+  cmdargs.session         = session;
+  cmdargs.use_legacy      = use_legacy;
+
+  return commands_exec_sync(sp_cmdbase, legacy_set, NULL, &cmdargs);
 }
 
 int

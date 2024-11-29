@@ -1248,9 +1248,20 @@ msg_tcp_read_one(struct sp_tcp_message *tmsg, struct sp_connection *conn)
 /* --------------------------- Outgoing messages ---------------------------- */
 
 static int
+must_resolve(struct sp_server *server)
+{
+  time_t now = time(NULL);
+
+  return (server->last_resolved_ts == 0) || (server->last_failed_ts + SP_AP_RESOLVE_AVOID_SECS > now);
+}
+
+static int
 msg_make_ap_resolve(struct sp_message *msg, struct sp_session *session)
 {
   struct http_request *hreq = &msg->payload.hreq;
+
+  if (!must_resolve(&session->accesspoint) && !must_resolve(&session->spclient) && !must_resolve(&session->dealer))
+    return 1; // Skip
 
   hreq->url = strdup("https://apresolve.spotify.com/?type=accesspoint&type=spclient&type=dealer");
   return 0;
@@ -1871,8 +1882,8 @@ static struct sp_seq_request seq_requests[][7] =
     // Just a dummy so that the array is aligned with the enum
     { SP_SEQ_STOP },
   },
-  // TODO split so we don't do unnecessary ap_resolve
   {
+    // Resolve will be skipped if already done and servers haven't failed on us
     { SP_SEQ_LOGIN, "AP_RESOLVE", SP_PROTO_HTTP, msg_make_ap_resolve, NULL, handle_ap_resolve, },
     { SP_SEQ_LOGIN, "CLIENT_HELLO", SP_PROTO_TCP, msg_make_client_hello, prepare_tcp_handshake, handle_client_hello, },
     { SP_SEQ_LOGIN, "CLIENT_RESPONSE_PLAINTEXT", SP_PROTO_TCP, msg_make_client_response_plaintext, prepare_tcp_handshake, NULL, },

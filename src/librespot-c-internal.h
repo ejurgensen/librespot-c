@@ -193,6 +193,7 @@ struct sp_cmdargs
   int fd_write;
   size_t seek_pos;
   enum sp_bitrates bitrate;
+  int use_legacy;
 
   sp_progress_cb progress_cb;
   void *cb_arg;

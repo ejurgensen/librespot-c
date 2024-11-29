@@ -73,6 +73,9 @@ int
 librespotc_logout(struct sp_session *session);
 
 int
+librespotc_legacy_set(struct sp_session *session, int use_legacy);
+
+int
 librespotc_bitrate_set(struct sp_session *session, enum sp_bitrates bitrate);
 
 int
