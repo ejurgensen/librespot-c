@@ -1016,6 +1016,8 @@ system_info_set(struct sp_sysinfo *si_out, struct sp_sysinfo *si_user)
 
   if (si_out->client_name[0] == '\0')
     snprintf(si_out->client_name, sizeof(si_out->client_name), SP_CLIENT_NAME_DEFAULT);
+  if (si_out->client_id[0] == '\0')
+    snprintf(si_out->client_id, sizeof(si_out->client_id), SP_CLIENT_ID_DEFAULT);
   if (si_out->client_version[0] == '\0')
     snprintf(si_out->client_version, sizeof(si_out->client_version), SP_CLIENT_VERSION_DEFAULT);
   if (si_out->client_build_id[0] == '\0')

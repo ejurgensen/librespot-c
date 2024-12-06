@@ -1728,7 +1728,7 @@ msg_make_clienttoken(struct sp_message *msg, struct sp_session *session)
   dreq.connectivity_sdk_data = &sdk_data;
   dreq.data_case = SPOTIFY__CLIENTTOKEN__HTTP__V0__CLIENT_DATA_REQUEST__DATA_CONNECTIVITY_SDK_DATA;
   dreq.client_version = sp_sysinfo.client_version; // e.g. "0.0.0" (SpotifyLikeClient)
-  dreq.client_id = SP_CLIENT_ID_HEX;
+  dreq.client_id = sp_sysinfo.client_id;
 
   treq.client_data = &dreq;
   treq.request_type = SPOTIFY__CLIENTTOKEN__HTTP__V0__CLIENT_TOKEN_REQUEST_TYPE__REQUEST_CLIENT_DATA_REQUEST;
@@ -1766,7 +1766,7 @@ msg_make_login5(struct sp_message *msg, struct sp_session *session)
   if (session->credentials.stored_cred_len == 0)
     return -1;
 
-  client_info.client_id = SP_CLIENT_ID_HEX;
+  client_info.client_id = sp_sysinfo.client_id;
   client_info.device_id = sp_sysinfo.device_id;
 
   req.client_info = &client_info;
