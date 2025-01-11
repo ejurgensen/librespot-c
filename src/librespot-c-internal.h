@@ -385,6 +385,9 @@ struct sp_session
   struct sp_token http_clienttoken;
   struct sp_token http_accesstoken;
 
+  int n_hashcash_challenges;
+  struct crypto_hashcash_challenge *hashcash_challenges;
+
   bool is_logged_in;
   struct sp_credentials credentials;
   char country[3]; // Incl null term
