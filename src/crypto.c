@@ -355,6 +355,8 @@ crypto_aes_seek(struct crypto_aes_cipher *cipher, size_t seek, const char **errm
   size_t num_blocks;
   size_t offset;
 
+  assert(cipher->aes);
+
   iv_len = gcry_cipher_get_algo_blklen(GCRY_CIPHER_AES128);
 
   assert(iv_len == sizeof(iv));

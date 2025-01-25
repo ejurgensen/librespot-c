@@ -49,9 +49,7 @@ events for proceeding are activated directly.
 
 // TODO
 // - update comments
-// - try different server if connection refused
 // - Valgrind
-// - Handle connection error -> ap_resolve
 
 #include <pthread.h>
 #include <assert.h>
@@ -267,6 +265,12 @@ session_retry(struct sp_session *session)
 
   ap_disconnect(&session->conn);
 
+  // If we were doing something other than login, queue that
+  if (session->request->seq_type != SP_SEQ_LOGIN)
+    seq_next_set(session, session->request->seq_type);
+
+  // Trigger login on a new server
+  session->request = seq_request_get(SP_SEQ_LOGIN, 0, session->use_legacy);
   sequence_continue(session);
 }
 
@@ -1037,7 +1041,6 @@ librespotc_init(struct sp_sysinfo *sysinfo, struct sp_callbacks *callbacks)
     RETURN_ERROR(SP_ERR_INVALID, "Bug! Misalignment between enum seq_type and seq_requests");
 
   sp_cb     = *callbacks;
-  sp_initialized = true;
 
   system_info_set(&sp_sysinfo, sysinfo);
 
@@ -1056,6 +1059,7 @@ librespotc_init(struct sp_sysinfo *sysinfo, struct sp_callbacks *callbacks)
   if (sp_cb.thread_name_set)
     sp_cb.thread_name_set(sp_tid);
 
+  sp_initialized = true;
   return 0;
 
  error:

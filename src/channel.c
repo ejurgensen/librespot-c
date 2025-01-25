@@ -247,14 +247,14 @@ channel_pause(struct sp_channel *channel)
   channel->state = SP_CHANNEL_STATE_PAUSED;
 }
 
-// After a disconnect we connect to another one and try to resume. To make that
-// work some data elements need to be reset.
+// After a disconnect we connect to another AP and try to resume. To make that
+// work during playback some data elements need to be reset.
 void
 channel_retry(struct sp_channel *channel)
 {
   size_t pos;
 
-  if (!channel)
+  if (!channel || channel->state != SP_CHANNEL_STATE_PLAYING)
     return;
 
   channel->is_data_mode = false;

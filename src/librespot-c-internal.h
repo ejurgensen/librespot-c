@@ -51,6 +51,9 @@
 // we get the hint and won't try reconnecting again until after this cooldown
 #define SP_AP_COOLDOWN_SECS 30
 
+// How long after a connection failure we try to avoid an AP
+#define SP_AP_AVOID_SECS 3600
+
 // If client hasn't requested anything in particular
 #define SP_BITRATE_DEFAULT SP_BITRATE_320
 

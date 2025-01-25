@@ -1,3 +1,5 @@
+#define _GNU_SOURCE // For asprintf and vasprintf
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -312,6 +314,14 @@ tcp_connection_make(struct sp_connection *conn, struct sp_server *server, struct
   return ret;
 }
 
+static int
+must_resolve(struct sp_server *server)
+{
+  time_t now = time(NULL);
+
+  return (server->last_resolved_ts == 0) || (server->last_failed_ts + SP_AP_AVOID_SECS > now);
+}
+
 void
 ap_disconnect(struct sp_connection *conn)
 {
@@ -326,6 +336,9 @@ ap_connect(struct sp_connection *conn, struct sp_server *server, time_t *cooldow
 {
   int ret;
   time_t now;
+
+  if (must_resolve(server))
+    RETURN_ERROR(SP_ERR_NOCONNECTION, "Cannot connect to access point, it has recently failed");
 
   // Protection against flooding the access points with reconnection attempts
   // Note that cooldown_ts can't be part of the connection struct because
@@ -547,7 +560,13 @@ prepare_tcp_handshake(struct sp_seq_request *request, struct sp_conn_callbacks *
   if (!session->conn.is_connected)
     {
       ret = ap_connect(&session->conn, &session->accesspoint, &session->cooldown_ts, cb, session);
-      if (ret < 0)
+      if (ret == SP_ERR_NOCONNECTION)
+	{
+	  seq_next_set(session, request->seq_type);
+	  session->request = seq_request_get(SP_SEQ_LOGIN, 0, session->use_legacy);
+	  return SP_OK_WAIT;
+	}
+      else if (ret < 0)
 	RETURN_ERROR(ret, sp_errmsg);
     }
 
@@ -563,8 +582,8 @@ prepare_tcp(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct
   int ret;
 
   ret = prepare_tcp_handshake(request, cb, session);
-  if (ret < 0)
-    return ret;
+  if (ret != SP_OK_DONE)
+    return ret; // SP_OK_WAIT if the current AP failed and we need to try a new one
 
   if (!session->conn.handshake_completed)
     {
@@ -580,8 +599,6 @@ prepare_tcp(struct sp_seq_request *request, struct sp_conn_callbacks *cb, struct
 
 /* --------------------------- Incoming messages ---------------------------- */
 
-#define SP_AP_RESOLVE_AVOID_SECS 3600
-
 static enum sp_error
 resolve_server_info_set(struct sp_server *server, const char *key, json_object *jresponse)
 {
@@ -595,7 +612,7 @@ resolve_server_info_set(struct sp_server *server, const char *key, json_object *
   int n;
   int i;
 
-  has_failed = (server->last_failed_ts + SP_AP_RESOLVE_AVOID_SECS > time(NULL));
+  has_failed = (server->last_failed_ts + SP_AP_AVOID_SECS > time(NULL));
 
   if (! (json_object_object_get_ex(jresponse, key, &list) || json_object_get_type(list) == json_type_array))
     RETURN_ERROR(SP_ERR_NOCONNECTION, "No address list in response from access point resolver");
@@ -608,7 +625,7 @@ resolve_server_info_set(struct sp_server *server, const char *key, json_object *
         RETURN_ERROR(SP_ERR_NOCONNECTION, "Unexpected data in response from access point resolver");
 
       s = json_object_get_string(instance); // This string includes the port
-      is_same = (server->address && strncmp(s, server->address, strlen(server->address) == 0));
+      is_same = server->address && (strncmp(s, server->address, strlen(server->address)) == 0);
 
       if (is_same && has_failed)
         s = NULL; // This AP has failed on us recently, so avoid
@@ -1297,14 +1314,6 @@ msg_tcp_read_one(struct sp_tcp_message *tmsg, struct sp_connection *conn)
 
 
 /* --------------------------- Outgoing messages ---------------------------- */
-
-static int
-must_resolve(struct sp_server *server)
-{
-  time_t now = time(NULL);
-
-  return (server->last_resolved_ts == 0) || (server->last_failed_ts + SP_AP_RESOLVE_AVOID_SECS > now);
-}
 
 static int
 msg_make_ap_resolve(struct sp_message *msg, struct sp_session *session)
