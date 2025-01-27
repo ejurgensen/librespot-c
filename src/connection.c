@@ -21,6 +21,9 @@
 
 #define MERCURY_REQ_SIZE_MAX 4096
 
+// Forgot how I arrived at this upper bound
+#define HASHCASH_ITERATIONS_MAX 100000
+
 static struct timeval sp_idle_tv = { SP_AP_DISCONNECT_SECS, 0 };
 
 static uint8_t sp_aes_iv[] = { 0x72, 0xe0, 0x67, 0xfb, 0xdd, 0xcb, 0xcf, 0x77, 0xeb, 0xe8, 0xbc, 0x64, 0x3f, 0x63, 0x0d, 0x93 };
@@ -604,6 +607,7 @@ resolve_server_info_set(struct sp_server *server, const char *key, json_object *
 {
   json_object *list;
   json_object *instance;
+  size_t address_len;
   const char *s;
   char *colon;
   bool is_same;
@@ -625,7 +629,8 @@ resolve_server_info_set(struct sp_server *server, const char *key, json_object *
         RETURN_ERROR(SP_ERR_NOCONNECTION, "Unexpected data in response from access point resolver");
 
       s = json_object_get_string(instance); // This string includes the port
-      is_same = server->address && (strncmp(s, server->address, strlen(server->address)) == 0);
+      address_len = strlen(server->address);
+      is_same = (address_len > 0) && (strncmp(s, server->address, address_len) == 0);
 
       if (is_same && has_failed)
         s = NULL; // This AP has failed on us recently, so avoid
@@ -636,10 +641,10 @@ resolve_server_info_set(struct sp_server *server, const char *key, json_object *
 
   if (!is_same)
     {
-      free(server->address);
       memset(server, 0, sizeof(struct sp_server));
-
-      server->address = strdup(s);
+      ret = snprintf(server->address, sizeof(server->address), "%s", s);
+      if (ret < 0 || ret >= sizeof(server->address))
+	RETURN_ERROR(SP_ERR_INVALID, "AP resolver returned an address that is too long");
 
       colon = strchr(server->address, ':');
       if (colon)
@@ -974,7 +979,7 @@ handle_login5_challenges(Spotify__Login5__V3__Challenges *challenges, uint8_t *l
 
       memcpy(crypto_challenge->prefix, this_challenge->hashcash->prefix.data, sizeof(crypto_challenge->prefix));
       crypto_challenge->wanted_zero_bits = this_challenge->hashcash->length;
-      crypto_challenge->max_iterations = 100000; //TODO define or make variable
+      crypto_challenge->max_iterations = HASHCASH_ITERATIONS_MAX;
 
     }
 
@@ -1210,11 +1215,11 @@ msg_tcp_handle(struct sp_message *msg, struct sp_session *session)
   // We have a tcp request waiting for a response
   if (request && request->proto == SP_PROTO_TCP && request->response_handler)
     {
-      sp_cb.logmsg("Handling response to %s\n", request->name);
+//      sp_cb.logmsg("Handling response to %s\n", request->name);
       return request->response_handler(msg, session);
     }
 
-  sp_cb.logmsg("Handling incoming tcp message\n");
+//  sp_cb.logmsg("Handling incoming tcp message\n");
   // Not waiting for anything, could be a ping
   return handle_tcp_generic(msg, session);
 }
@@ -1227,7 +1232,7 @@ msg_http_handle(struct sp_message *msg, struct sp_session *session)
   // We have a http request waiting for a response
   if (request && request->proto == SP_PROTO_HTTP && request->response_handler)
     {
-      sp_cb.logmsg("Handling response to %s\n", request->name);
+//      sp_cb.logmsg("Handling response to %s\n", request->name);
       return request->response_handler(msg, session);
     }
 
@@ -2036,7 +2041,7 @@ msg_make_media_get(struct sp_message *msg, struct sp_session *session)
 
   hreq->headers[0] = asprintf_or_die("Range: bytes=%zu-%zu", bytes_from, bytes_to);
 
-  sp_cb.logmsg("Asking for %s\n", hreq->headers[0]);
+//  sp_cb.logmsg("Asking for %s\n", hreq->headers[0]);
 
   return 0;
 }
@@ -2224,7 +2229,7 @@ msg_http_send(struct http_response *hres, struct http_request *hreq, struct http
 
   hreq->user_agent = sp_sysinfo.client_name;
 
-  sp_cb.logmsg("Making http request to %s\n", hreq->url);
+//  sp_cb.logmsg("Making http request to %s\n", hreq->url);
 
   ret = http_request(hres, hreq, hses);
   if (ret < 0)

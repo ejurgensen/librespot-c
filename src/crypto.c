@@ -57,7 +57,7 @@ static const uint8_t prime_bytes[] =
 };
 
 static void
-crypto_log(const char *fmt, ...)
+crypto_debug(const char *fmt, ...)
 {
   return;
 }
@@ -238,14 +238,14 @@ crypto_decrypt(uint8_t *encrypted, size_t encrypted_len, struct crypto_cipher *c
   size_t header_len = sizeof(cipher->last_header);
   size_t payload_len;
 
-  crypto_log("Decrypting %zu bytes with nonce %u\n", encrypted_len, cipher->nonce);
+  crypto_debug("Decrypting %zu bytes with nonce %u\n", encrypted_len, cipher->nonce);
 //  crypto_hexdump("Key\n", cipher->key, sizeof(cipher->key));
 //  crypto_hexdump("Encrypted\n", encrypted, encrypted_len);
 
   // In case we didn't even receive the basics, header and mac, then return.
   if (encrypted_len < header_len + sizeof(mac))
     {
-      crypto_log("Waiting for %zu header bytes, have %zu\n", header_len + sizeof(mac), encrypted_len);
+      crypto_debug("Waiting for %zu header bytes, have %zu\n", header_len + sizeof(mac), encrypted_len);
       return 0;
     }
 
@@ -265,7 +265,7 @@ crypto_decrypt(uint8_t *encrypted, size_t encrypted_len, struct crypto_cipher *c
 
       payload_len = payload_len_get(cipher->last_header);
 
-//      crypto_log("Payload len is %zu\n", payload_len);
+//      crypto_debug("Payload len is %zu\n", payload_len);
 //      crypto_hexdump("Decrypted header\n", encrypted, header_len);
     }
 
@@ -276,7 +276,7 @@ crypto_decrypt(uint8_t *encrypted, size_t encrypted_len, struct crypto_cipher *c
   // Not enough data for decrypting the entire packet
   if (payload_len > encrypted_len)
     {
-      crypto_log("Waiting for %zu payload bytes, have %zu\n", payload_len, encrypted_len);
+      crypto_debug("Waiting for %zu payload bytes, have %zu\n", payload_len, encrypted_len);
       return 0;
     }
 
@@ -289,7 +289,7 @@ crypto_decrypt(uint8_t *encrypted, size_t encrypted_len, struct crypto_cipher *c
 //  crypto_hexdump("mac our\n", mac, sizeof(mac));
   if (memcmp(mac, encrypted + payload_len, sizeof(mac)) != 0)
     {
-      crypto_log("MAC VALIDATION FAILED\n"); // TODO
+      crypto_debug("MAC validation failed\n");
       memset(cipher->last_header, 0, header_len);
       return -1;
     }

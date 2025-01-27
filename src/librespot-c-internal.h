@@ -238,7 +238,7 @@ struct sp_message
 
 struct sp_server
 {
-  char *address; // e.g. ap-gue1.spotify.com
+  char address[256]; // e.g. ap-gue1.spotify.com
   unsigned short port; // normally 433 or 4070
   time_t last_connect_ts;
   time_t last_resolved_ts;

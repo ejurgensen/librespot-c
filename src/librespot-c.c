@@ -23,8 +23,8 @@
 
 
 /*
-Illustration of the general flow, where receive and writing the result are async
-operations. For some commands, e.g. open and seek, the entire sequence is
+Illustration of the general tcp flow, where receive and writing the result are
+async operations. For some commands, e.g. open and seek, the entire sequence is
 encapsulated in a sync command, which doesn't return until final "done, error or
 timeout". The command play is async, so all "done/error/timeout" is returned via
 callbacks. Also, play will loop the flow, i.e. after writing a chunk of data it
@@ -46,10 +46,6 @@ events for proceeding are activated directly.
 "wait": waiting for more data or for write to become possible
 "timeout": receive or write took too long to complete
 */
-
-// TODO
-// - update comments
-// - Valgrind
 
 #include <pthread.h>
 #include <assert.h>
@@ -469,7 +465,7 @@ sequence_continue(struct sp_session *session)
   struct sp_message msg = { 0 };
   int ret;
 
-  sp_cb.logmsg("Preparing request '%s'\n", session->request->name);
+//  sp_cb.logmsg("Preparing request '%s'\n", session->request->name);
 
   // Checks if the dependencies for making the request are met - e.g. do we have
   // a connection and a valid token. If not, tries to satisfy them.
