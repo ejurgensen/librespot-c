@@ -1813,21 +1813,24 @@ msg_make_clienttoken(struct sp_message *msg, struct sp_session *session)
 }
 
 static void
-challenge_solutions_free(Spotify__Login5__V3__ChallengeSolutions *solutions)
+challenge_solutions_clear(Spotify__Login5__V3__ChallengeSolutions *solutions)
 {
   Spotify__Login5__V3__ChallengeSolution *this_solution;
   int i;
 
-  if (!solutions)
+  if (!solutions->solutions)
     return;
 
   for (i = 0; i < solutions->n_solutions; i++)
     {
       this_solution = solutions->solutions[i];
+      if (!this_solution)
+	continue;
 
       free(this_solution->hashcash->duration);
       free(this_solution->hashcash->suffix.data);
       free(this_solution->hashcash);
+      free(this_solution);
     }
 
   free(solutions->solutions);
@@ -1845,7 +1848,9 @@ challenge_solutions_append(Spotify__Login5__V3__ChallengeSolutions *solutions, s
   int i;
 
   solutions->n_solutions = n_challenges;
-  solutions->solutions = calloc(n_challenges, sizeof(Spotify__Login5__V3__ChallengeSolution));
+  solutions->solutions = calloc(n_challenges, sizeof(Spotify__Login5__V3__ChallengeSolution *));
+  if (!solutions->solutions)
+    RETURN_ERROR(SP_ERR_OOM, "Out of memory allocating hashcash solutions");
 
   for (i = 0, crypto_challenge = challenges; i < n_challenges; i++, crypto_challenge++)
     {
@@ -1853,7 +1858,7 @@ challenge_solutions_append(Spotify__Login5__V3__ChallengeSolutions *solutions, s
       if (ret < 0)
 	RETURN_ERROR(SP_ERR_INVALID, sp_errmsg);
 
-      this_solution = solutions->solutions[i];
+      this_solution = malloc(sizeof(Spotify__Login5__V3__ChallengeSolution));
       spotify__login5__v3__challenge_solution__init(this_solution);
       this_solution->solution_case = SPOTIFY__LOGIN5__V3__CHALLENGE_SOLUTION__SOLUTION_HASHCASH;
 
@@ -1868,13 +1873,15 @@ challenge_solutions_append(Spotify__Login5__V3__ChallengeSolutions *solutions, s
       memcpy(this_solution->hashcash->suffix.data, crypto_solution.suffix, suffix_len);
 
       this_solution->hashcash->duration->seconds = crypto_solution.duration.tv_sec;
-      this_solution->hashcash->duration->nanos = crypto_solution.duration.tv_nsec;;
+      this_solution->hashcash->duration->nanos = crypto_solution.duration.tv_nsec;
+
+      solutions->solutions[i] = this_solution;
     }
 
   return 0;
 
  error:
-  challenge_solutions_free(solutions);
+  challenge_solutions_clear(solutions);
   return ret;
 }
 
@@ -1942,12 +1949,12 @@ msg_make_login5(struct sp_message *msg, struct sp_session *session)
   hreq->headers[1] = asprintf_or_die("Content-Type: application/x-protobuf");
   hreq->headers[2] = asprintf_or_die("Client-Token: %s", session->http_clienttoken.value);
 
-  challenge_solutions_free(&solutions);
+  challenge_solutions_clear(&solutions);
   free(login_context);
   return 0;
 
  error:
-  challenge_solutions_free(&solutions);
+  challenge_solutions_clear(&solutions);
   free(login_context);
   return -1;
 }
