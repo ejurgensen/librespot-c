@@ -144,7 +144,7 @@ session_new(struct sp_session **out, struct sp_cmdargs *cmdargs, event_callback_
   if (cmdargs->stored_cred)
     {
       if (cmdargs->stored_cred_len > sizeof(session->credentials.stored_cred))
-	RETURN_ERROR(SP_ERR_INVALID, "Invalid stored credential");
+	RETURN_ERROR(SP_ERR_INVALID, "Stored credentials too long");
 
       session->credentials.stored_cred_len = cmdargs->stored_cred_len;
       memcpy(session->credentials.stored_cred, cmdargs->stored_cred, session->credentials.stored_cred_len);
@@ -152,7 +152,7 @@ session_new(struct sp_session **out, struct sp_cmdargs *cmdargs, event_callback_
   else if (cmdargs->token)
     {
       if (strlen(cmdargs->token) > sizeof(session->credentials.token))
-	RETURN_ERROR(SP_ERR_INVALID, "Invalid token");
+	RETURN_ERROR(SP_ERR_INVALID, "Token too long");
 
       session->credentials.token_len = strlen(cmdargs->token);
       memcpy(session->credentials.token, cmdargs->token, session->credentials.token_len);
