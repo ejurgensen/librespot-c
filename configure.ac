@@ -1,4 +1,4 @@
-AC_INIT([librespot-c], [0.1])
+AC_INIT([librespot-c], [0.6])
 AC_CONFIG_AUX_DIR([.])
 AM_INIT_AUTOMAKE([foreign subdir-objects])
 AM_SILENT_RULES([yes])
